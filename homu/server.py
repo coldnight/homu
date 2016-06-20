@@ -476,6 +476,30 @@ def github():
     return 'OK'
 
 
+def _report_deploy_builder_status(state, repo_cfg):
+    """ Add a comment to report deploy builder's status.
+
+    buildbot use `/png`, see below:
+
+        http://docs.buildbot.net/current/manual/cfg-statustargets.html
+    """
+
+    buildbot = repo_cfg.get("buildbot", {})
+    url = buildbot.get("deploy_url") or buildbot.get("url")
+    builder = buildbot.get("deploy_builder")
+    if not builder or not url:
+        return
+
+    builder = urllib.parse.quote(builder)
+    builder_url = "{}/builders/{}".format(url, builder)
+
+    img_url = "{}/png?builder={}&size=large&revision={}".format(
+        url, builder, state.merge_sha)
+    comment = ":rocket: deploy status [![deploy status]({})]({})".format(
+        img_url, builder_url)
+    state.add_comment(comment)
+
+
 def report_build_res(succ, url, builder, state, logger, repo_cfg):
     lazy_debug(logger,
                lambda: 'build result {}: builder = {}, succ = {}, current build_res = {}'  # noqa
@@ -491,28 +515,30 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
             utils.github_create_status(state.get_repo(), state.head_sha,
                                        'success', url, desc, context='homu')
 
-            urls = ', '.join('[{}]({})'.format(builder, x['url']) for builder, x in sorted(state.build_res.items()))  # noqa
+            urls = ', '.join('[{}]({})'.format(builder, x['url'])
+                             for builder, x in sorted(state.build_res.items()))
             test_comment = ':sunny: {} - {}'.format(desc, urls)
 
             if state.approved_by and not state.try_:
-                comment = (test_comment + '\n' +
-                           'Approved by: {}\nPushing {} to {}...'
-                           ).format(state.approved_by, state.merge_sha,
-                                    state.base_ref)
+                comment = '{}\nApproved by: {}\nPushing {} to {}...'.format(
+                    test_comment, state.approved_by, state.merge_sha,
+                    state.base_ref)
+
                 state.add_comment(comment)
                 try:
                     try:
-                        utils.github_set_ref(state.get_repo(), 'heads/' +
-                                             state.base_ref, state.merge_sha)
+                        utils.github_set_ref(
+                            state.get_repo(), 'heads/' + state.base_ref,
+                            state.merge_sha)
                     except github3.models.GitHubError:
                         utils.github_create_status(
-                            state.get_repo(),
-                            state.merge_sha,
-                            'success', '',
-                            'Branch protection bypassed',
-                            context='homu')
-                        utils.github_set_ref(state.get_repo(), 'heads/' +
-                                             state.base_ref, state.merge_sha)
+                            state.get_repo(), state.merge_sha, 'success', '',
+                            'Branch protection bypassed', context='homu')
+                        utils.github_set_ref(
+                            state.get_repo(), 'heads/' + state.base_ref,
+                            state.merge_sha)
+                    else:
+                        _report_deploy_builder_status(state, repo_cfg)
 
                     state.fake_merge(repo_cfg)
 

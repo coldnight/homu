@@ -96,6 +96,9 @@ secret = ""
 #
 #username = ""
 #password = ""
+#
+#deploy_url = ""
+#deploy_builder = ""
 
 ## Use travis for running tests
 #[repo.NAME.travis]
