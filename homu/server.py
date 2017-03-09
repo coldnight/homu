@@ -593,7 +593,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
     g.queue_handler()
 
 
-def _handle_buildbot_interrupted(info):
+def _handle_buildbot_interrupted(repo_cfg, state, logger, props, info, url):
     """Returns True if interrupted by homu"""
     step_name = ''
     for step in reversed(info['steps']):
@@ -691,7 +691,8 @@ def buildbot(item):
             )
 
             if 'interrupted' in info['text']:
-                if _handle_buildbot_interrupted(info):
+                if _handle_buildbot_interrupted(
+                        repo_cfg, state, logger, props, info, url):
                     continue
 
             if item == "buildbot":
