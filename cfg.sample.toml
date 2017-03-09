@@ -97,8 +97,11 @@ secret = ""
 #username = ""
 #password = ""
 #
-#deploy_url = ""
-#deploy_builder = ""
+## Use buildbot for deployment
+#[repo.NAME.buildbot.deployment]
+#url = ""
+#secret = ""
+#builder = ""
 
 ## Use travis for running tests
 #[repo.NAME.travis]

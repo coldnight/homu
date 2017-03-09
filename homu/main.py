@@ -1256,7 +1256,7 @@ def fetch_mergeability(mergeable_que):
         try:
             state, cause = mergeable_que.get()
 
-            if state.status == 'success':
+            if state.status in ['success', 'deploying']:
                 continue
 
             pull_request = state.get_repo().pull_request(state.num)

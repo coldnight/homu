@@ -109,6 +109,20 @@ pip install -e homu
     ))
     ```
 
+
+ - Deployment
+
+    Deployment use buildbot, insert the following code to the `master.cfg` file:
+
+    ```python
+    from buildbot.status.status_push import HttpStatusPush
+
+    c['status'].append(HttpStatusPush(
+        serverUrl='http://HOST:PORT/deployment',
+        extra_post_params={'secret': 'repo.NAME.buildbot.deployment.secret in cfg.toml'},
+    ))
+    ```
+
  - Travis CI
 
    Add [your Travis token][travis] as `repo.NAME.travis.token` in cfg.toml.

@@ -50,6 +50,33 @@ def find_state(sha):
     raise ValueError('Invalid SHA')
 
 
+def remove_state(state):
+    """Remove state"""
+    pull_num = state.num
+    repo_label = state.repo_label
+
+    del g.states[repo_label][pull_num]
+
+    db_query(g.db, 'DELETE FROM pull WHERE repo = ? AND num = ?',
+             [repo_label, pull_num])
+    db_query(g.db, 'DELETE FROM build_res WHERE repo = ? AND num = ?',
+             [repo_label, pull_num])
+    db_query(g.db, 'DELETE FROM mergeable WHERE repo = ? AND num = ?',
+             [repo_label, pull_num])
+
+
+def require_listen_deployment(repo_cfg):
+    return repo_cfg.get("buildbot", {}).get("deployment")
+
+
+def find_deployment(state, sha):
+    for deployment in state.get_repo().iter_deployments(10):
+        if deployment.sha == sha:
+            return deployment
+
+    raise ValueError("Deployment not found")
+
+
 def get_repo(repo_label, repo_cfg):
     repo = g.repos[repo_label].gh
     if not repo:
@@ -388,14 +415,11 @@ def github():
 
                 utils.retry_until(inner, fail, state)
 
-            del g.states[repo_label][pull_num]
-
-            db_query(g.db, 'DELETE FROM pull WHERE repo = ? AND num = ?',
-                     [repo_label, pull_num])
-            db_query(g.db, 'DELETE FROM build_res WHERE repo = ? AND num = ?',
-                     [repo_label, pull_num])
-            db_query(g.db, 'DELETE FROM mergeable WHERE repo = ? AND num = ?',
-                     [repo_label, pull_num])
+            repo_cfg = g.repo_cfgs[repo_label]
+            if not require_listen_deployment(repo_cfg):
+                remove_state(state)
+            else:
+                state.set_status("deploying")
 
             g.queue_handler()
 
@@ -476,28 +500,26 @@ def github():
     return 'OK'
 
 
-def _report_deploy_builder_status(state, repo_cfg):
-    """ Add a comment to report deploy builder's status.
-
-    buildbot use `/png`, see below:
-
-        http://docs.buildbot.net/current/manual/cfg-statustargets.html
-    """
+def _try_create_deployment(state, repo_cfg):
+    """Create deployment and set deployment status if configured."""
 
     buildbot = repo_cfg.get("buildbot", {})
-    url = buildbot.get("deploy_url") or buildbot.get("url")
-    builder = buildbot.get("deploy_builder")
+    deployment = buildbot.get("deployment", {})
+
+    url = deployment.get("url") or deployment.get("url")
+    builder = deployment.get("builder")
     if not builder or not url:
         return
 
-    builder = urllib.parse.quote(builder)
-    builder_url = "{}/builders/{}".format(url, builder)
+    state.add_comment(":coffee: Wait for deployment.")
+    try:
+        deployment = state.get_repo().create_deployment(state.merge_sha)
+        deployment.create_status("pending")
+    except github3.models.GitHubError:
+        logger = g.logger.getChild('deployment')
+        logger.exception("Error on create deployment")
 
-    img_url = "{}/png?builder={}&size=large&revision={}".format(
-        url, builder, state.merge_sha)
-    comment = ":rocket: deploy status [![deploy status]({})]({})".format(
-        img_url, builder_url)
-    state.add_comment(comment)
+    g.queue_handler()
 
 
 def report_build_res(succ, url, builder, state, logger, repo_cfg):
@@ -538,7 +560,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                             state.get_repo(), 'heads/' + state.base_ref,
                             state.merge_sha)
                     else:
-                        _report_deploy_builder_status(state, repo_cfg)
+                        _try_create_deployment(state, repo_cfg)
 
                     state.fake_merge(repo_cfg)
 
@@ -571,8 +593,55 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
     g.queue_handler()
 
 
-@post('/buildbot')
-def buildbot():
+def _handle_buildbot_interrupted(info):
+    """Returns True if interrupted by homu"""
+    step_name = ''
+    for step in reversed(info['steps']):
+        if 'interrupted' in step.get('text', []):
+            step_name = step['name']
+            break
+
+    if not step_name:
+        logger.error('Corrupt payload from Buildbot')
+        return False
+
+    try:
+        res = requests.get(
+            '{}/builders/{}/builds/{}/steps/{}/logs/interrupt'.format(
+                repo_cfg['buildbot']['url'],
+                info['builderName'],
+                props['buildnumber'],
+                step_name,)
+        )
+    except Exception as ex:
+        logger.warn('/buildbot encountered an error during github logs request')        # NOQA
+        # probably related to https://gitlab.com/pycqa/flake8/issues/42
+        lazy_debug(logger, lambda: 'buildbot logs err: {}'.format(ex))  # NOQA
+        abort(502, 'Bad Gateway')
+
+    mat = INTERRUPTED_BY_HOMU_RE.search(res.text)
+    if not mat:
+        return False
+
+    interrupt_token = mat.group(1)
+    if getattr(state, 'interrupt_token', '') != interrupt_token:
+        state.interrupt_token = interrupt_token
+
+        if state.status == 'pending':
+            state.set_status('')
+
+            desc = ':snowman: The build was interrupted to prioritize another pull request.'    # NOQA
+            state.add_comment(desc)
+            utils.github_create_status(state.get_repo(), state.head_sha,
+                                       'error', url, desc, context='homu')
+
+            g.queue_handler()
+
+    return True
+
+
+@post('/<item:re:(buildbot|deployment)>')
+def buildbot(item):
     logger = g.logger.getChild('buildbot')
 
     response.content_type = 'text/plain'
@@ -598,14 +667,19 @@ def buildbot():
 
             lazy_debug(logger, lambda: 'state: {}, {}'.format(state, state.build_res_summary()))  # noqa
 
-            if info['builderName'] not in state.build_res:
+            if info['builderName'] not in state.build_res and item == "buildbot":   # NOQA
                 lazy_debug(logger,
                            lambda: 'Invalid builder from Buildbot: {}'.format(info['builderName']))  # noqa
                 continue
 
             repo_cfg = g.repo_cfgs[repo_label]
 
-            if request.forms.secret != repo_cfg['buildbot']['secret']:
+            if item == "buildbot":
+                secret = repo_cfg['buildbot']['secret']
+            else:
+                secret = repo_cfg["buildbot"]["deployment"]["secret"]
+
+            if request.forms.secret != secret:
                 abort(400, 'Invalid secret')
 
             build_succ = 'successful' in info['text'] or info['results'] == 0
@@ -617,56 +691,36 @@ def buildbot():
             )
 
             if 'interrupted' in info['text']:
-                step_name = ''
-                for step in reversed(info['steps']):
-                    if 'interrupted' in step.get('text', []):
-                        step_name = step['name']
-                        break
+                if _handle_buildbot_interrupted(info):
+                    continue
 
-                if step_name:
-                    try:
-                        url = ('{}/builders/{}/builds/{}/steps/{}/logs/interrupt'  # noqa
-                               ).format(repo_cfg['buildbot']['url'],
-                                        info['builderName'],
-                                        props['buildnumber'],
-                                        step_name,)
-                        res = requests.get(url)
-                    except Exception as ex:
-                        logger.warn('/buildbot encountered an error during '
-                                    'github logs request')
-                        # probably related to
-                        # https://gitlab.com/pycqa/flake8/issues/42
-                        lazy_debug(logger, lambda: 'buildbot logs err: {}'.format(ex))  # noqa
-                        abort(502, 'Bad Gateway')
-
-                    mat = INTERRUPTED_BY_HOMU_RE.search(res.text)
-                    if mat:
-                        interrupt_token = mat.group(1)
-                        if getattr(state, 'interrupt_token',
-                                   '') != interrupt_token:
-                            state.interrupt_token = interrupt_token
-
-                            if state.status == 'pending':
-                                state.set_status('')
-
-                                desc = (':snowman: The build was interrupted '
-                                        'to prioritize another pull request.')
-                                state.add_comment(desc)
-                                utils.github_create_status(state.get_repo(),
-                                                           state.head_sha,
-                                                           'error', url,
-                                                           desc,
-                                                           context='homu')
-
-                                g.queue_handler()
-
-                        continue
-
+            if item == "buildbot":
+                report_build_res(build_succ, url, info['builderName'],
+                                 state, logger, repo_cfg)
+            else:
+                if build_succ:
+                    status_text = "successfull"
+                    emoji = ":tada:"
                 else:
-                    logger.error('Corrupt payload from Buildbot')
+                    status_text = "failed"
+                    emoji = ":bangbang:"
 
-            report_build_res(build_succ, url, info['builderName'],
-                             state, logger, repo_cfg)
+                url = '{}/builders/{}/builds/{}'.format(
+                    repo_cfg['buildbot']["deployment"]['url'],
+                    urllib.parse.quote(info['builderName']),
+                    props['buildnumber'])
+                state.add_comment("{} Deploy {}: [{}]({}).".format(
+                    emoji, status_text, info["builderName"], url))
+
+                try:
+                    deployment = find_deployment(state, props["revision"])
+                    deployment_status = "success" if build_succ else "error"
+                    deployment.create_status(deployment_status, url)
+                except (github3.models.GitHubError, ValueError):
+                    logger.exception("Update deployment status error")
+
+                remove_state(state)
+                g.queue_handler()
 
         elif row['event'] == 'buildStarted':
             info = row['payload']['build']
@@ -681,19 +735,28 @@ def buildbot():
             except ValueError:
                 pass
             else:
+                repo_cfg = g.repo_cfgs[repo_label]
+
                 if info['builderName'] in state.build_res:
-                    repo_cfg = g.repo_cfgs[repo_label]
-
-                    if request.forms.secret != repo_cfg['buildbot']['secret']:
-                        abort(400, 'Invalid secret')
-
                     url = '{}/builders/{}/builds/{}'.format(
                         repo_cfg['buildbot']['url'],
                         info['builderName'],
                         props['buildnumber'],
                     )
 
+                    if request.forms.secret != repo_cfg['buildbot']['secret']:
+                        abort(400, 'Invalid secret')
+
                     state.set_build_res(info['builderName'], None, url)
+                elif item == "deployment":
+                    url = '{}/builders/{}/builds/{}'.format(
+                        repo_cfg['buildbot']["deployment"]['url'],
+                        urllib.parse.quote(info['builderName']),
+                        props['buildnumber'],
+                    )
+                    state.add_comment(
+                        ":rocket: Deployment started: [{}]({})."
+                        .format(info["builderName"], url))
 
             if g.buildbot_slots[0] == props['revision']:
                 g.buildbot_slots[0] = ''
