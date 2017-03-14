@@ -69,8 +69,14 @@ def require_listen_deployment(repo_cfg):
     return repo_cfg.get("buildbot", {}).get("deployment")
 
 
-def find_deployment(state, sha):
-    for deployment in state.get_repo().iter_deployments(10):
+def find_deployment(state, sha, num=10):
+    """Find deployment from Github
+
+    :param int num:
+        The latest number to find, default on 10 because I think there will
+        not a lot pending deployment. Set ``-1`` to unlimited.
+    """
+    for deployment in state.get_repo().iter_deployments(num):
         if deployment.sha == sha:
             return deployment
 
@@ -500,7 +506,7 @@ def github():
     return 'OK'
 
 
-def _try_create_deployment(state, repo_cfg):
+def _attempt_create_deployment(state, repo_cfg):
     """Create deployment and set deployment status if configured."""
 
     buildbot = repo_cfg.get("buildbot", {})
@@ -560,7 +566,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                             state.get_repo(), 'heads/' + state.base_ref,
                             state.merge_sha)
                     else:
-                        _try_create_deployment(state, repo_cfg)
+                        _attempt_create_deployment(state, repo_cfg)
 
                     state.fake_merge(repo_cfg)
 
