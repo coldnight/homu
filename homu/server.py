@@ -646,8 +646,15 @@ def _handle_buildbot_interrupted(repo_cfg, state, logger, props, info, url):
     return True
 
 
-@post('/<item:re:(buildbot|deployment)>')
-def buildbot(item):
+@post('/<build_type:re:(buildbot|deployment)>')
+def buildbot(build_type):
+    """Listen buildbot HTTPStatusPush, this handler includes two endpoints:
+
+    - ``/buildbot``: Handling test builds to merge the PR or not.
+    - ``/deployment``: Handling deployment builds to report deployment status.
+    """
+    is_test_build = build_type == "buildbot"
+
     logger = g.logger.getChild('buildbot')
 
     response.content_type = 'text/plain'
@@ -673,14 +680,15 @@ def buildbot(item):
 
             lazy_debug(logger, lambda: 'state: {}, {}'.format(state, state.build_res_summary()))  # noqa
 
-            if info['builderName'] not in state.build_res and item == "buildbot":   # NOQA
+            # If this is a test build, it must in the recorded build results
+            if (is_test_build and info['builderName'] not in state.build_res):
                 lazy_debug(logger,
                            lambda: 'Invalid builder from Buildbot: {}'.format(info['builderName']))  # noqa
                 continue
 
             repo_cfg = g.repo_cfgs[repo_label]
 
-            if item == "buildbot":
+            if is_test_build:
                 secret = repo_cfg['buildbot']['secret']
             else:
                 secret = repo_cfg["buildbot"]["deployment"]["secret"]
@@ -701,7 +709,7 @@ def buildbot(item):
                         repo_cfg, state, logger, props, info, url):
                     continue
 
-            if item == "buildbot":
+            if is_test_build:
                 report_build_res(build_succ, url, info['builderName'],
                                  state, logger, repo_cfg)
             else:
@@ -712,17 +720,17 @@ def buildbot(item):
                     status_text = "failed"
                     emoji = ":bangbang:"
 
-                url = '{}/builders/{}/builds/{}'.format(
+                deployment_url = '{}/builders/{}/builds/{}'.format(
                     repo_cfg['buildbot']["deployment"]['url'],
                     urllib.parse.quote(info['builderName']),
                     props['buildnumber'])
                 state.add_comment("{} Deploy {}: [{}]({}).".format(
-                    emoji, status_text, info["builderName"], url))
+                    emoji, status_text, info["builderName"], deployment_url))
 
                 try:
                     deployment = find_deployment(state, props["revision"])
                     deployment_status = "success" if build_succ else "error"
-                    deployment.create_status(deployment_status, url)
+                    deployment.create_status(deployment_status, deployment_url)
                 except (github3.models.GitHubError, ValueError):
                     logger.exception("Update deployment status error")
 
@@ -744,7 +752,7 @@ def buildbot(item):
             else:
                 repo_cfg = g.repo_cfgs[repo_label]
 
-                if info['builderName'] in state.build_res:
+                if is_test_build and info['builderName'] in state.build_res:
                     url = '{}/builders/{}/builds/{}'.format(
                         repo_cfg['buildbot']['url'],
                         info['builderName'],
@@ -755,15 +763,15 @@ def buildbot(item):
                         abort(400, 'Invalid secret')
 
                     state.set_build_res(info['builderName'], None, url)
-                elif item == "deployment":
-                    url = '{}/builders/{}/builds/{}'.format(
+                elif build_type == "deployment":
+                    deployment_url = '{}/builders/{}/builds/{}'.format(
                         repo_cfg['buildbot']["deployment"]['url'],
                         urllib.parse.quote(info['builderName']),
                         props['buildnumber'],
                     )
                     state.add_comment(
                         ":rocket: Deployment started: [{}]({})."
-                        .format(info["builderName"], url))
+                        .format(info["builderName"], deployment_url))
 
             if g.buildbot_slots[0] == props['revision']:
                 g.buildbot_slots[0] = ''

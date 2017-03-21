@@ -112,7 +112,7 @@ pip install -e homu
 
  - Deployment
 
-    Deployment use buildbot, insert the following code to the `master.cfg` file:
+    Homu supports deployment via buildbot, insert the following code to the `master.cfg` file:
 
     ```python
     from buildbot.status.status_push import HttpStatusPush
