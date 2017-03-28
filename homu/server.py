@@ -528,6 +528,35 @@ def _attempt_create_deployment(state, repo_cfg):
     g.queue_handler()
 
 
+def report_deployment_res(succ, url, builder, state, logger, repo_cfg):
+    """Report deployment result via comment and Github Deployment Status."""
+    lazy_debug(logger,
+               lambda: 'deployment result {}: builder = {}, succ = {}, current build_res = {}'  # noqa
+                       .format(state, builder, succ,
+                               state.build_res_summary()))
+
+    if succ:
+        status_text = "successfull"
+        emoji = ":tada:"
+    else:
+        status_text = "failed"
+        emoji = ":bangbang:"
+
+    state.add_comment("{} Deploy {}: [{}]({}).".format(
+        emoji, status_text, builder, url))
+
+    try:
+        deployment = find_deployment(state, state.merge_sha)
+        deployment_status = "success" if succ else "error"
+        deployment.create_status(deployment_status, url)
+    except (github3.models.GitHubError, ValueError):
+        logger.exception("Update deployment status error")
+
+    # Remove state after deployment done
+    remove_state(state)
+    g.queue_handler()
+
+
 def report_build_res(succ, url, builder, state, logger, repo_cfg):
     lazy_debug(logger,
                lambda: 'build result {}: builder = {}, succ = {}, current build_res = {}'  # noqa
@@ -543,8 +572,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
             utils.github_create_status(state.get_repo(), state.head_sha,
                                        'success', url, desc, context='homu')
 
-            urls = ', '.join('[{}]({})'.format(builder, x['url'])
-                             for builder, x in sorted(state.build_res.items()))
+            urls = ', '.join('[{}]({})'.format(builder, x['url']) for builder, x in sorted(state.build_res.items()))    # noqa
             test_comment = ':sunny: {} - {}'.format(desc, urls)
 
             if state.approved_by and not state.try_:
@@ -555,13 +583,15 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                 state.add_comment(comment)
                 try:
                     try:
-                        utils.github_set_ref(
-                            state.get_repo(), 'heads/' + state.base_ref,
-                            state.merge_sha)
+                        utils.github_set_ref(state.get_repo(), 'heads/' +
+                                             state.base_ref, state.merge_sha)
                     except github3.models.GitHubError:
                         utils.github_create_status(
-                            state.get_repo(), state.merge_sha, 'success', '',
-                            'Branch protection bypassed', context='homu')
+                            state.get_repo(),
+                            state.merge_sha,
+                            'success', '',
+                            'Branch protection bypassed',
+                            context='homu')
                         utils.github_set_ref(
                             state.get_repo(), 'heads/' + state.base_ref,
                             state.merge_sha)
@@ -680,62 +710,39 @@ def buildbot(build_type):
 
             lazy_debug(logger, lambda: 'state: {}, {}'.format(state, state.build_res_summary()))  # noqa
 
-            # If this is a test build, it must in the recorded build results
-            if (is_test_build and info['builderName'] not in state.build_res):
-                lazy_debug(logger,
-                           lambda: 'Invalid builder from Buildbot: {}'.format(info['builderName']))  # noqa
-                continue
-
             repo_cfg = g.repo_cfgs[repo_label]
 
             if is_test_build:
-                secret = repo_cfg['buildbot']['secret']
-            else:
-                secret = repo_cfg["buildbot"]["deployment"]["secret"]
+                # If this is a test build, it must in the recorded build
+                # results.
+                if info['builderName'] not in state.build_res:
+                    lazy_debug(logger,
+                            lambda: 'Invalid builder from Buildbot: {}'.format(info['builderName']))  # noqa
+                    continue
 
-            if request.forms.secret != secret:
+                config = repo_cfg['buildbot']
+                report_func = report_build_res
+            else:
+                config = repo_cfg["buildbot"]["deployment"]
+                report_func = report_deployment_res
+
+            if request.forms.secret != config["secret"]:
                 abort(400, 'Invalid secret')
 
             build_succ = 'successful' in info['text'] or info['results'] == 0
 
             url = '{}/builders/{}/builds/{}'.format(
-                repo_cfg['buildbot']['url'],
+                config['url'],
                 info['builderName'],
-                props['buildnumber'],
-            )
+                props['buildnumber'])
 
             if 'interrupted' in info['text']:
                 if _handle_buildbot_interrupted(
                         repo_cfg, state, logger, props, info, url):
                     continue
 
-            if is_test_build:
-                report_build_res(build_succ, url, info['builderName'],
-                                 state, logger, repo_cfg)
-            else:
-                if build_succ:
-                    status_text = "successfull"
-                    emoji = ":tada:"
-                else:
-                    status_text = "failed"
-                    emoji = ":bangbang:"
-
-                deployment_url = '{}/builders/{}/builds/{}'.format(
-                    repo_cfg['buildbot']["deployment"]['url'],
-                    urllib.parse.quote(info['builderName']),
-                    props['buildnumber'])
-                state.add_comment("{} Deploy {}: [{}]({}).".format(
-                    emoji, status_text, info["builderName"], deployment_url))
-
-                try:
-                    deployment = find_deployment(state, props["revision"])
-                    deployment_status = "success" if build_succ else "error"
-                    deployment.create_status(deployment_status, deployment_url)
-                except (github3.models.GitHubError, ValueError):
-                    logger.exception("Update deployment status error")
-
-                remove_state(state)
-                g.queue_handler()
+            report_func(build_succ, url, info['builderName'], state, logger,
+                        repo_cfg)
 
         elif row['event'] == 'buildStarted':
             info = row['payload']['build']
@@ -752,26 +759,30 @@ def buildbot(build_type):
             else:
                 repo_cfg = g.repo_cfgs[repo_label]
 
-                if is_test_build and info['builderName'] in state.build_res:
-                    url = '{}/builders/{}/builds/{}'.format(
-                        repo_cfg['buildbot']['url'],
-                        info['builderName'],
-                        props['buildnumber'],
-                    )
+                if is_test_build:
+                    # If this is a test build, it must in the recorded build
+                    # results.
+                    if info['builderName'] not in state.build_res:
+                        continue
 
-                    if request.forms.secret != repo_cfg['buildbot']['secret']:
-                        abort(400, 'Invalid secret')
+                    config = repo_cfg['buildbot']
+                else:
+                    config = repo_cfg["buildbot"]["deployment"]
 
+                if request.forms.secret != config['secret']:
+                    abort(400, 'Invalid secret')
+
+                url = '{}/builders/{}/builds/{}'.format(
+                    config['url'],
+                    info['builderName'],
+                    props['buildnumber'])
+
+                if is_test_build:
                     state.set_build_res(info['builderName'], None, url)
-                elif build_type == "deployment":
-                    deployment_url = '{}/builders/{}/builds/{}'.format(
-                        repo_cfg['buildbot']["deployment"]['url'],
-                        urllib.parse.quote(info['builderName']),
-                        props['buildnumber'],
-                    )
+                else:
                     state.add_comment(
                         ":rocket: Deployment started: [{}]({})."
-                        .format(info["builderName"], deployment_url))
+                        .format(info["builderName"], url))
 
             if g.buildbot_slots[0] == props['revision']:
                 g.buildbot_slots[0] = ''
