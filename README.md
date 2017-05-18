@@ -107,7 +107,8 @@ the name of the repository you are configuring homu for.
 
 6. Add a Webhook to your continuous integration service, if necessary. You don't
    need this if using Travis/Appveyor.
-   - Buildbot 
+
+    - Buildbot 0.8
 
      Insert the following code to the `master.cfg` file:
 
@@ -120,6 +121,38 @@ the name of the repository you are configuring homu for.
      ))
      ```
 
+    - Buildbot 0.9 via GithubStatusPush
+
+     Buildbot 0.9 support [GithubStatusPush](http://docs.buildbot.net/latest/manual/cfg-reporters.html#githubstatuspush),
+     so we can use this to integrate with Github and Buildbot 0.9.
+
+     Insert the following code to the `master.cfg` file:
+
+     ```python
+     from buildbot.plugins import reporters, util
+     from buildbot.process.properties import Interpolate
+
+
+     context = Interpolate("buildbot/%(prop:buildername)s")
+     gs = reporters.GitHubStatusPush(token='A Github personal acess token',
+                                     context=context,
+                                     startDescription='Build started.',
+                                     endDescription='Build done.')
+     c['services'].append(gs)
+     ```
+
+     **Note**: Buildbot 0.9 use project to detect the repository at Github. So made your `project` to `<owner>/<repo>` 
+     in [GitPoller](http://docs.buildbot.net/latest/manual/cfg-changesources.html#gitpoller).
+
+     Now the config of the repository in Homu's config file should looks like below:
+
+     ```toml
+     [repo.NAME.status.LABEL1]
+     context = "buildbot/<builder-name>"     # <builder-name> should replaced by the real builder name
+
+     [repo.NAME.status.LABEL2]
+     context = "buildbot/<builder2-name>"     # <builder2-name> should replaced by the real builder name
+     ```
 7. Go through the rest of your `cfg.toml` and uncomment (and change, if needed)
    parts of the config you'll need.
 
