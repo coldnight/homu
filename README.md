@@ -118,10 +118,13 @@ the name of the repository you are configuring homu for.
      c['status'].append(HttpStatusPush(
         serverUrl='http://HOST:PORT/buildbot',
         extra_post_params={'secret': 'repo.NAME.buildbot.secret in cfg.toml'},
-     ))
-     ```
+    ))
+    ```
 
-    - Buildbot 0.9 via GithubStatusPush
+  - Buildbot 0.9 via GitHub Status
+
+     Buildbot 0.9 support [GitHubStatusPush](http://docs.buildbot.net/latest/manual/cfg-reporters.html#githubstatuspush),
+     so we can use this to integrate with GitHub and Buildbot 0.9.
 
      Buildbot 0.9 support [GithubStatusPush](http://docs.buildbot.net/latest/manual/cfg-reporters.html#githubstatuspush),
      so we can use this to integrate with Github and Buildbot 0.9.
@@ -132,16 +135,15 @@ the name of the repository you are configuring homu for.
      from buildbot.plugins import reporters, util
      from buildbot.process.properties import Interpolate
 
-
      context = Interpolate("buildbot/%(prop:buildername)s")
-     gs = reporters.GitHubStatusPush(token='A Github personal acess token',
+     gs = reporters.GitHubStatusPush(token='A GitHub personal access token',
                                      context=context,
                                      startDescription='Build started.',
                                      endDescription='Build done.')
      c['services'].append(gs)
      ```
 
-     **Note**: Buildbot 0.9 use project to detect the repository at Github. So made your `project` to `<owner>/<repo>` 
+     **Note**: Buildbot 0.9 use project to detect the repository at GitHub. So made your `project` to `<owner>/<repo>` 
      in [GitPoller](http://docs.buildbot.net/latest/manual/cfg-changesources.html#gitpoller).
 
      Now the config of the repository in Homu's config file should looks like below:
