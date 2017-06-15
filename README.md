@@ -108,7 +108,7 @@ the name of the repository you are configuring homu for.
 6. Add a Webhook to your continuous integration service, if necessary. You don't
    need this if using Travis/Appveyor.
 
-    - Buildbot 0.8
+  - Buildbot 0.8
 
      Insert the following code to the `master.cfg` file:
 
