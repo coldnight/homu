@@ -47,12 +47,12 @@ def login(access_token):
 
 
 def iter_issue_comments(repo, num):
-    return repo.mergerequests.get(num).notes()
+    return repo.mergerequests.get(num).notes.list()
 
 
 def get_ref_sha(repo, ref):
     branch_name = ref.lstrip("heads/")
-    return repo.branches.get(branch_name).commit.id
+    return repo.branches.get(branch_name).commit["id"]
 
 
 def get_pull_request_sha(repo, num):

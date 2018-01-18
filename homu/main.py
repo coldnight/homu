@@ -114,11 +114,12 @@ class PullReqState:
     assignee = ''
     delegate = ''
 
-    def __init__(self, num, head_sha, status, db, repo_label, mergeable_que,
+    def __init__(self, id_, num, head_sha, status, db, repo_label, mergeable_que,
                  gh, owner, name, repos):
         self.head_advanced('', use_db=False)
 
         self.num = num
+        self.id_ = id_
         self.head_sha = head_sha
         self.status = status
         self.db = db
@@ -172,11 +173,11 @@ class PullReqState:
     def get_issue(self):
         issue = getattr(self, 'issue', None)
         if not issue:
-            issue = self.issue = self.get_repo().issue(self.num)
+            issue = self.issue = self.get_repo().mergerequests.get(self.id_)
         return issue
 
     def add_comment(self, text):
-        self.get_issue().create_comment(text)
+        self.get_issue().notes.create({"body": text})
 
     def set_status(self, status):
         self.status = status
@@ -266,18 +267,20 @@ class PullReqState:
     def get_repo(self):
         repo = self.repos[self.repo_label].gh
         if not repo:
-            repo = self.gh.repository(self.owner, self.name)
+            gh = gitlab.login(global_cfg['gitlab']['access_token'])
+            repo = gitlab.get_repository(gh, self.owner, self.name)
             self.repos[self.repo_label].gh = repo
 
-            assert repo.owner.login == self.owner
-            assert repo.name == self.name
+            # assert repo.owner.login == self.owner
+            # assert repo.name == self.name
         return repo
 
     def save(self):
         db_query(
             self.db,
-            'INSERT OR REPLACE INTO pull (repo, num, status, merge_sha, title, body, head_sha, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, delegate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',  # noqa
+            'INSERT OR REPLACE INTO pull (id, repo, num, status, merge_sha, title, body, head_sha, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, delegate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',  # noqa
             [
+                self.id_,
                 self.repo_label,
                 self.num,
                 self.status,
@@ -296,10 +299,10 @@ class PullReqState:
             ])
 
     def refresh(self):
-        issue = self.get_repo().issue(self.num)
+        issue = self.get_repo().mergerequests.get(self.id_)
 
         self.title = issue.title
-        self.body = issue.body
+        self.body = issue.description
 
     def fake_merge(self, repo_cfg):
         if not repo_cfg.get('linear', False):
@@ -342,7 +345,7 @@ class PullReqState:
         gitlab.create_status(
             self.get_repo(),
             self.head_sha,
-            'failure',
+            'failed',
             '',
             desc,
             context='homu')
@@ -478,7 +481,7 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
 
                 state.head_sha = gitlab.get_pull_request_sha(
                     state.get_repo(),
-                    state.num,
+                    state.id_,
                 )
                 state.save()
 
@@ -508,13 +511,14 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
 
                 state.add_comment('\n'.join(lines))
 
+            print("Current sha %s, head_sha %s" % (cur_sha, state.head_sha))
             if sha_cmp(cur_sha, state.head_sha):
                 state.approved_by = approver
                 state.try_ = False
                 state.set_status('')
 
                 state.save()
-            elif realtime and username != my_username:
+            elif realtime: # and username != my_username:
                 if cur_sha:
                     msg = '`{}` is not a valid commit SHA.'.format(cur_sha)
                     state.add_comment(
@@ -592,7 +596,7 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
                 continue
 
             state.delegate = gitlab.get_pull_request_user(
-                state.get_repo(), state.num,
+                state.get_repo(), state.id_,
             )
             state.save()
 
@@ -774,8 +778,10 @@ def init_local_git_cmds(repo_cfg, git_cfg):
 
 
 def branch_equal_to_merge(git_cmd, state, branch):
-    utils.logged_call(git_cmd('fetch', 'origin',
-                              'pull/{}/merge'.format(state.num)))
+    utils.logged_call(git_cmd(
+        'fetch', 'origin',
+        'merge-requests/{}/merge'.format(state.num),
+    ))
     return utils.silent_call(git_cmd('diff', '--quiet', 'FETCH_HEAD', branch)) == 0  # noqa
 
 
@@ -801,8 +807,12 @@ def create_merge(state, repo_cfg, branch, logger, git_cfg,
 
     git_cmd = init_local_git_cmds(repo_cfg, git_cfg)
 
-    utils.logged_call(git_cmd('fetch', 'origin', state.base_ref,
-                              'pull/{}/head'.format(state.num)))
+    utils.logged_call(
+        git_cmd(
+            'fetch', 'origin', state.base_ref,
+            'merge-requests/{}/head'.format(state.num),
+        )
+    )
     utils.silent_call(git_cmd('rebase', '--abort'))
     utils.silent_call(git_cmd('merge', '--abort'))
 
@@ -898,7 +908,7 @@ def create_merge(state, repo_cfg, branch, logger, git_cfg,
     gitlab.create_status(
         state.get_repo(),
         state.head_sha,
-        'error',
+        'canceled',
         '',
         desc,
         context='homu')
@@ -912,8 +922,12 @@ def pull_is_rebased(state, repo_cfg, git_cfg, base_sha):
     assert git_cfg['local_git']
     git_cmd = init_local_git_cmds(repo_cfg, git_cfg)
 
-    utils.logged_call(git_cmd('fetch', 'origin', state.base_ref,
-                              'pull/{}/head'.format(state.num)))
+    utils.logged_call(
+        git_cmd(
+            'fetch', 'origin', state.base_ref,
+            'merge-requests/{}/head'.format(state.num),
+        )
+    )
 
     return utils.silent_call(git_cmd('merge-base', '--is-ancestor',
                                      base_sha, state.head_sha)) == 0
@@ -928,8 +942,10 @@ def get_gitlab_merge_sha(state, repo_cfg, git_cfg):
     if state.mergeable is not True:
         return None
 
-    utils.logged_call(git_cmd('fetch', 'origin',
-                              'pull/{}/merge'.format(state.num)))
+    utils.logged_call(git_cmd(
+        'fetch', 'origin',
+       'merge-requests/{}/merge'.format(state.num),
+    ))
 
     return subprocess.check_output(git_cmd('rev-parse', 'FETCH_HEAD')).decode('ascii').strip()  # noqa
 
@@ -1083,7 +1099,7 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
 
     lazy_debug(logger, lambda: "start_build on {!r}".format(state.get_repo()))
 
-    pull_request_sha = gitlab.get_pull_request_sha(state.get_repo(), state.num)
+    pull_request_sha = gitlab.get_pull_request_sha(state.get_repo(), state.id_)
     assert state.head_sha == pull_request_sha
 
     repo_cfg = repo_cfgs[state.repo_label]
@@ -1165,7 +1181,7 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
     gitlab.create_status(
         state.get_repo(),
         state.head_sha,
-        'pending',
+        'running',
         '',
         desc,
         context='homu')
@@ -1242,7 +1258,7 @@ def start_rebuild(state, repo_cfgs):
     gitlab.create_status(
         state.get_repo(),
         state.head_sha,
-        'pending',
+        'running',
         '',
         '{}{}...'.format(msg_1, msg_3),
         context='homu')
@@ -1307,7 +1323,7 @@ def fetch_mergeability(mergeable_que):
                 continue
 
             mergeable = gitlab.is_pull_request_mergeable(
-                state.get_repo(), state.num,
+                state.get_repo(), state.id_,
             )
 
             if state.mergeable is True and mergeable is False:
@@ -1357,46 +1373,33 @@ def synchronize(repo_label, repo_cfg, logger, gh, states, repos, db, mergeable_q
     states[repo_label] = {}
     repos[repo_label] = Repository(repo, repo_label, db)
 
-    for pull in repo.iter_pulls(state='open'):
+    for pull in repo.mergerequests.list(state='opened'):
         db_query(
             db,
             'SELECT status FROM pull WHERE repo = ? AND num = ?',
-            [repo_label, pull.number])
+            [repo_label, pull.iid])
         row = db.fetchone()
         if row:
             status = row[0]
         else:
             status = ''
-            for info in gitlab.iter_statuses(repo, pull.head.sha):
+            for info in gitlab.iter_statuses(repo, pull.sha):
                 if info.context == 'homu':
                     status = info.state
                     break
 
-        state = PullReqState(pull.number, pull.head.sha, status, db, repo_label, mergeable_que, gh, repo_cfg['owner'], repo_cfg['name'], repos)  # noqa
+        state = PullReqState(pull.id, pull.iid, pull.sha, status, db, repo_label, mergeable_que, gh, repo_cfg['owner'], repo_cfg['name'], repos)  # noqa
         state.title = pull.title
-        state.body = pull.body
-        state.head_ref = pull.head.repo[0] + ':' + pull.head.ref
-        state.base_ref = pull.base.ref
+        state.body = pull.description
+        state.head_ref = pull.author.username + ':' + pull.source_branch
+        state.base_ref = pull.target_branch
         state.set_mergeable(None)
-        state.assignee = pull.assignee.login if pull.assignee else ''
+        state.assignee = pull.assignee.username if pull.assignee else ''
 
-        for comment in pull.iter_comments():
-            if comment.original_commit_id == pull.head.sha:
-                parse_commands(
-                    comment.body,
-                    comment.user.login,
-                    repo_cfg,
-                    state,
-                    my_username,
-                    db,
-                    states,
-                    sha=comment.original_commit_id,
-                )
-
-        for comment in pull.iter_issue_comments():
+        for comment in gitlab.iter_issue_comments(repo, pull.id):
             parse_commands(
                 comment.body,
-                comment.user.login,
+                comment.author.username,
                 repo_cfg,
                 state,
                 my_username,
@@ -1404,14 +1407,14 @@ def synchronize(repo_label, repo_cfg, logger, gh, states, repos, db, mergeable_q
                 states,
             )
 
-        saved_state = saved_states.get(pull.number)
+        saved_state = saved_states.get(pull.iid)
         if saved_state:
             for key, val in saved_state.items():
                 setattr(state, key, val)
 
         state.save()
 
-        states[repo_label][pull.number] = state
+        states[repo_label][pull.iid] = state
 
     logger.info('Done synchronizing {}!'.format(repo_label))
 
@@ -1471,7 +1474,7 @@ def main():
     repos = {}
     repo_cfgs = {}
     buildbot_slots = ['']
-    my_username = user.login
+    my_username = user.username
     repo_labels = {}
     mergeable_que = Queue()
     git_cfg = {
@@ -1489,6 +1492,7 @@ def main():
 
     db_query(db, '''CREATE TABLE IF NOT EXISTS pull (
         repo TEXT NOT NULL,
+        id INTEGER NOT NULL,
         num INTEGER NOT NULL,
         status TEXT NOT NULL,
         merge_sha TEXT,
@@ -1536,10 +1540,10 @@ def main():
 
         db_query(
             db,
-            'SELECT num, head_sha, status, title, body, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, delegate, merge_sha FROM pull WHERE repo = ?',   # noqa
+            'SELECT id, num, head_sha, status, title, body, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, delegate, merge_sha FROM pull WHERE repo = ?',   # noqa
             [repo_label])
-        for num, head_sha, status, title, body, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, delegate, merge_sha in db.fetchall():  # noqa
-            state = PullReqState(num, head_sha, status, db, repo_label, mergeable_que, gh, repo_cfg['owner'], repo_cfg['name'], repos)  # noqa
+        for id_, num, head_sha, status, title, body, head_ref, base_ref, assignee, approved_by, priority, try_, rollup, delegate, merge_sha in db.fetchall():  # noqa
+            state = PullReqState(id_, num, head_sha, status, db, repo_label, mergeable_que, gh, repo_cfg['owner'], repo_cfg['name'], repos)  # noqa
             state.title = title
             state.body = body
             state.head_ref = head_ref

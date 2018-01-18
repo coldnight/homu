@@ -272,35 +272,35 @@ def gitlab_hook():
 
     lazy_debug(logger, lambda: 'info: {}'.format(utils.remove_url_keys_from_json(info)))  # noqa
 
-    owner_info = info['repository']['owner']
-    owner = owner_info.get('login') or owner_info['name']
-    repo_label = g.repo_labels[owner, info['repository']['name']]
+    try:
+        path = urllib.parse.urlparse(info["repository"]["homepage"]).path
+        owner, repo_name = path.split("/")[1:]
+    except KeyError:
+        owner, repo_name = info["project"]["path_with_namespace"].split("/")
+
+    repo_label = g.repo_labels[owner, repo_name]
     repo_cfg = g.repo_cfgs[repo_label]
 
-    hmac_method, hmac_sig = request.headers['X-Hub-Signature'].split('=')
-    if hmac_sig != hmac.new(
-        repo_cfg['gitlab']['secret'].encode('utf-8'),
-        payload,
-        hmac_method,
-    ).hexdigest():
+    if request.headers["X-Gitlab-Token"] != repo_cfg["gitlab"]["secret"]:
         abort(400, 'Invalid signature')
 
     event_type = request.headers['X-Gitlab-Event']
     if event_type == "Note Hook":
         if info["object_attributes"]["noteable_type"] == "MergeRequest":
             event_type = "mr_comment"
-
+    lazy_debug(logger, lambda: "Got event_type {}".format(event_type))
     if event_type == 'Merge Request Hook':
         mr = info["object_attributes"]
         action = mr['open']
-        pull_num = mr["id"]
+        pull_num = mr["iid"]
         head_sha = mr["last_commit"]["id"]
-        owner, name = mr["source"]["path_with_namespace"].split("/")
+        source_owner, source_name = mr["source"]["path_with_namespace"].split("/")  # noqa
         if action in ['open', 'reopen']:
             state = PullReqState(
+                mr["id"],
                 pull_num, head_sha, '', g.db, repo_label,
                 g.mergeable_que, g.gh,
-                owner, name,
+                source_owner, source_name,
                 g.repos,
             )
             state.title = mr['title']
@@ -404,7 +404,7 @@ def gitlab_hook():
     elif event_type == 'mr_comment':
         body = info["object_attributes"]["note"]
         username = info['user']['username']
-        pull_num = info["merge_request"]["id"]
+        pull_num = info["merge_request"]["iid"]
         mr = info["merge_request"]
         state = g.states[repo_label].get(pull_num)
 
@@ -426,33 +426,33 @@ def gitlab_hook():
 
                 g.queue_handler()
 
-    elif event_type == 'Build Hook':
+    elif event_type == 'Job Hook':
         try:
             state, repo_label = find_state(info['sha'])
         except ValueError:
             return 'OK'
 
+        lazy_debug(logger, lambda: 'Found state via: {}'.format(info["sha"]))  # noqa
         status_name = ""
         if 'status' in repo_cfg:
             for name, value in repo_cfg['status'].items():
                 if 'context' in value and value['context'] == info['build_name']:  # noqa
                     status_name = name
+
         if status_name is "":
             return 'OK'
-        state = info["build_status"]
-
-        if info['state'] == 'pending':
+        if info['build_status'] in ['running', 'created']:
             return 'OK'
 
-        for row in info['branches']:
-            if row['name'] == state.base_ref:
-                return 'OK'
-        target_url = "{}/jobs/{}".format(
+        # for row in info['branches']:
+        #     if row['name'] == state.base_ref:
+        #         return 'OK'
+        target_url = "{}/-/jobs/{}".format(
             info["repository"]["homepage"],
             info["build_id"],
         )
         report_build_res(
-            info['state'] == 'success', target_url,
+            info['build_status'] == 'success', target_url,
             'status-' + status_name, state, logger, repo_cfg,
         )
 
@@ -528,12 +528,14 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
             desc = 'Test failed'
             gitlab.create_status(
                 state.get_repo(), state.head_sha,
-                'failure', url, desc, context='homu',
+                'failed', url, desc, context='homu',
             )
 
-            state.add_comment(':broken_heart: {} - [{}]({})'.format(desc,
-                                                                    builder,
-                                                                    url))
+            state.add_comment(':broken_heart: {} - [{}]({})'.format(
+                desc,
+                builder,
+                url,
+            ))
 
     g.queue_handler()
 
