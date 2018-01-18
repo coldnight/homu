@@ -9,7 +9,7 @@ from .main import (
     synchronize,
 )
 from . import utils
-from . import github
+from . import gitlab
 from .utils import lazy_debug
 import jinja2
 import requests
@@ -81,7 +81,7 @@ def queue(repo_label):
         multiple = len(labels) > 1
         if repo_label in g.repos and g.repos[repo_label].treeclosed >= 0:
             single_repo_closed = g.repos[repo_label].treeclosed
-        repo_url = 'https://github.com/{}/{}'.format(
+        repo_url = 'https://gitlab.com/{}/{}'.format(
             g.cfg['repo'][repo_label]['owner'],
             g.cfg['repo'][repo_label]['name'])
 
@@ -109,7 +109,7 @@ def queue(repo_label):
             'status': state.get_status(),
             'status_ext': status_ext,
             'priority': 'rollup' if state.rollup else state.priority,
-            'url': 'https://github.com/{}/{}/pull/{}'.format(state.owner,
+            'url': 'https://gitlab.com/{}/{}/pull/{}'.format(state.owner,
                                                              state.name,
                                                              state.num),
             'num': state.num,
@@ -120,7 +120,7 @@ def queue(repo_label):
                           'no' if state.mergeable is False else ''),
             'assignee': state.assignee,
             'repo_label': state.repo_label,
-            'repo_url': 'https://github.com/{}/{}'.format(state.owner,
+            'repo_url': 'https://gitlab.com/{}/{}'.format(state.owner,
                                                           state.name),
             'greyed': "treeclosed" if treeclosed else "",
         })
@@ -130,7 +130,7 @@ def queue(repo_label):
         repo_label=repo_label,
         treeclosed=single_repo_closed,
         states=rows,
-        oauth_client_id=g.cfg['github']['app_client_id'],
+        oauth_client_id=g.cfg['gitlab.]['app_client_id'],
         total=len(pull_states),
         approved=len([x for x in pull_states if x.approved_by]),
         rolled_up=len([x for x in pull_states if x.rollup]),
@@ -150,19 +150,19 @@ def callback():
     state = json.loads(request.query.state)
 
     lazy_debug(logger, lambda: 'state: {}'.format(state))
-    oauth_url = 'https://github.com/login/oauth/access_token'
+    oauth_url = 'https://gitlab.com/login/oauth/access_token'
 
     try:
         res = requests.post(oauth_url, data={
-            'client_id': g.cfg['github']['app_client_id'],
-            'client_secret': g.cfg['github']['app_client_secret'],
+            'client_id': g.cfg['gitlab.]['app_client_id'],
+            'client_secret': g.cfg['gitlab.]['app_client_secret'],
             'code': code,
         })
     except Exception as ex:
         logger.warn('/callback encountered an error '
-                    'during github oauth callback')
+                    'during gitlab.oauth callback')
         # probably related to https://gitlab.com/pycqa/flake8/issues/42
-        lazy_debug(logger, lambda: 'github oauth callback err: {}'.format(ex))  # noqa
+        lazy_debug(logger, lambda: 'gitlab.oauth callback err: {}'.format(ex))  # noqa
         abort(502, 'Bad Gateway')
 
     args = urllib.parse.parse_qs(res.text)
@@ -172,7 +172,7 @@ def callback():
     repo_cfg = g.repo_cfgs[repo_label]
     repo = get_repo(repo_label, repo_cfg)
 
-    user_gh = github.login(token)
+    user_gh = gitlab.login(token)
 
     if state['cmd'] == 'rollup':
         return rollup(user_gh, state, repo_label, repo_cfg, repo)
@@ -203,7 +203,7 @@ def rollup(user_gh, state, repo_label, repo_cfg, repo):
     base_ref = rollup_states[0].base_ref
 
     base_sha = repo.ref('heads/' + base_ref).object.sha
-    github.set_ref(
+    gitlab.set_ref(
         user_repo,
         'heads/' + repo_cfg.get('branch', {}).get('rollup', 'rollup'),
         base_sha,
@@ -229,7 +229,7 @@ def rollup(user_gh, state, repo_label, repo_cfg, repo):
         try:
             rollup = repo_cfg.get('branch', {}).get('rollup', 'rollup')
             user_repo.merge(rollup, state.head_sha, merge_msg)
-        except github.CommonError as e:
+        except gitlab.CommonError as e:
             if e.code != 409:
                 raise
 
@@ -251,15 +251,15 @@ def rollup(user_gh, state, repo_label, repo_cfg, repo):
             user_repo.owner.login + ':' + rollup,
             body,
         )
-    except github.CommonError as e:
+    except gitlab.CommonError as e:
         return e.response.text
     else:
         redirect(pull.html_url)
 
 
-@post('/github')
-def github_hook():
-    logger = g.logger.getChild('github')
+@post('/gitlab.)
+def gitlab.hook():
+    logger = g.logger.getChild('gitlab.)
 
     response.content_type = 'text/plain'
 
@@ -275,7 +275,7 @@ def github_hook():
 
     hmac_method, hmac_sig = request.headers['X-Hub-Signature'].split('=')
     if hmac_sig != hmac.new(
-        repo_cfg['github']['secret'].encode('utf-8'),
+        repo_cfg['gitlab.]['secret'].encode('utf-8'),
         payload,
         hmac_method,
     ).hexdigest():
@@ -341,7 +341,7 @@ def github_hook():
 
             if action == 'reopened':
                 # FIXME: Review comments are ignored here
-                for c in github.iter_issue_comments(
+                for c in gitlab.iter_issue_comments(
                         state.get_repo(), pull_num
                 ):
                     found = parse_commands(
@@ -355,7 +355,7 @@ def github_hook():
                     ) or found
 
                 status = ''
-                for info in github.iter_statuses(
+                for info in gitlab.iter_statuses(
                         state.get_repo(),
                         state.head_sha,
                 ):
@@ -376,7 +376,7 @@ def github_hook():
             state = g.states[repo_label][pull_num]
             if hasattr(state, 'fake_merge_sha'):
                 def inner():
-                    github.set_ref(
+                    gitlab.set_ref(
                         state.get_repo(),
                         'heads/' + state.base_ref,
                         state.merge_sha,
@@ -491,7 +491,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
         if all(x['res'] for x in state.build_res.values()):
             state.set_status('success')
             desc = 'Test successful'
-            github.create_status(
+            gitlab.create_status(
                 state.get_repo(), state.head_sha,
                 'success', url, desc, context='homu',
             )
@@ -507,29 +507,29 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                 state.add_comment(comment)
                 try:
                     try:
-                        github.set_ref(
+                        gitlab.set_ref(
                             state.get_repo(), 'heads/' +
                             state.base_ref, state.merge_sha,
                         )
-                    except github.CommonError:
-                        github.create_status(
+                    except gitlab.CommonError:
+                        gitlab.create_status(
                             state.get_repo(),
                             state.merge_sha,
                             'success', '',
                             'Branch protection bypassed',
                             context='homu')
-                        github.set_ref(
+                        gitlab.set_ref(
                             state.get_repo(), 'heads/' +
                             state.base_ref, state.merge_sha,
                         )
 
                     state.fake_merge(repo_cfg)
 
-                except github.CommonError as e:
+                except gitlab.CommonError as e:
                     state.set_status('error')
                     desc = ('Test was successful, but fast-forwarding failed:'
                             ' {}'.format(e))
-                    github.create_status(
+                    gitlab.create_status(
                         state.get_repo(),
                         state.head_sha, 'error', url,
                         desc, context='homu',
@@ -546,7 +546,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
         if state.status == 'pending':
             state.set_status('failure')
             desc = 'Test failed'
-            github.create_status(
+            gitlab.create_status(
                 state.get_repo(), state.head_sha,
                 'failure', url, desc, context='homu',
             )
@@ -620,7 +620,7 @@ def buildbot():
                         res = requests.get(url)
                     except Exception as ex:
                         logger.warn('/buildbot encountered an error during '
-                                    'github logs request')
+                                    'gitlab.logs request')
                         # probably related to
                         # https://gitlab.com/pycqa/flake8/issues/42
                         lazy_debug(logger, lambda: 'buildbot logs err: {}'.format(ex))  # noqa
@@ -639,7 +639,7 @@ def buildbot():
                                 desc = (':snowman: The build was interrupted '
                                         'to prioritize another pull request.')
                                 state.add_comment(desc)
-                                github.create_status(
+                                gitlab.create_status(
                                     state.get_repo(),
                                     state.head_sha,
                                     'error', url,

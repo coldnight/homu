@@ -4,7 +4,7 @@ import json
 import re
 import functools
 from . import utils
-from . import github
+from . import gitlab
 from .utils import lazy_debug
 import logging
 from threading import Thread, Lock, Timer
@@ -309,7 +309,7 @@ class PullReqState:
 
         issue = self.get_issue()
         title = issue.title
-        # We tell github to close the PR via the commit message, but it
+        # We tell gitlab.to close the PR via the commit message, but it
         # doesn't know that constitutes a merge.  Edit the title so that it's
         # clearer.
         merged_prefix = '[merged] '
@@ -339,7 +339,7 @@ class PullReqState:
         self.set_status('failure')
 
         desc = 'Test timed out'
-        github.create_status(
+        gitlab.create_status(
             self.get_repo(),
             self.head_sha,
             'failure',
@@ -376,7 +376,7 @@ def verify_auth(username, repo_cfg, state, auth, realtime, my_username):
     is_reviewer = False
     auth_collaborators = repo_cfg.get('auth_collaborators', False)
     if auth_collaborators:
-        is_reviewer = github.is_collaborator(state.get_repo(), username)
+        is_reviewer = gitlab.is_collaborator(state.get_repo(), username)
     if not is_reviewer:
         is_reviewer = username in repo_cfg.get('reviewers', [])
     if not is_reviewer:
@@ -405,7 +405,7 @@ def verify_auth(username, repo_cfg, state, auth, realtime, my_username):
 
 
 PORTAL_TURRET_DIALOG = ["Target acquired", "Activated", "There you are"]
-PORTAL_TURRET_IMAGE = "https://cloud.githubusercontent.com/assets/1617736/22222924/c07b2a1c-e16d-11e6-91b3-ac659550585c.png"  # noqa
+PORTAL_TURRET_IMAGE = "https://cloud.gitlab.sercontent.com/assets/1617736/22222924/c07b2a1c-e16d-11e6-91b3-ac659550585c.png"  # noqa
 
 
 def parse_commands(body, username, repo_cfg, state, my_username, db, states,
@@ -476,7 +476,7 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
                         .format(state.head_sha)
                     )
 
-                state.head_sha = github.get_pull_request_sha(
+                state.head_sha = gitlab.get_pull_request_sha(
                     state.get_repo(),
                     state.num,
                 )
@@ -591,7 +591,7 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
             if not _reviewer_auth_verified():
                 continue
 
-            state.delegate = github.get_pull_request_user(
+            state.delegate = gitlab.get_pull_request_user(
                 state.get_repo(), state.num,
             )
             state.save()
@@ -734,7 +734,7 @@ def git_push(git_cmd, branch, state):
         utils.logged_call(git_cmd('push', '-f', 'origin', 'homu-tmp'))
 
         def inner():
-            github.create_status(
+            gitlab.create_status(
                 state.get_repo(),
                 merge_sha,
                 'success',
@@ -758,7 +758,7 @@ def git_push(git_cmd, branch, state):
 
 def init_local_git_cmds(repo_cfg, git_cfg):
     fpath = 'cache/{}/{}'.format(repo_cfg['owner'], repo_cfg['name'])
-    url = 'git@github.com:{}/{}.git'.format(repo_cfg['owner'], repo_cfg['name'])  # noqa
+    url = 'git@gitlab.com:{}/{}.git'.format(repo_cfg['owner'], repo_cfg['name'])  # noqa
 
     if not os.path.exists(SSH_KEY_FILE):
         os.makedirs(os.path.dirname(SSH_KEY_FILE), exist_ok=True)
@@ -781,7 +781,7 @@ def branch_equal_to_merge(git_cmd, state, branch):
 
 def create_merge(state, repo_cfg, branch, logger, git_cfg,
                  ensure_merge_equal=False):
-    base_sha = github.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
+    base_sha = gitlab.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
 
     state.refresh()
 
@@ -799,121 +799,103 @@ def create_merge(state, repo_cfg, branch, logger, git_cfg,
 
     desc = 'Merge conflict'
 
-    if git_cfg['local_git']:
+    git_cmd = init_local_git_cmds(repo_cfg, git_cfg)
 
-        git_cmd = init_local_git_cmds(repo_cfg, git_cfg)
+    utils.logged_call(git_cmd('fetch', 'origin', state.base_ref,
+                              'pull/{}/head'.format(state.num)))
+    utils.silent_call(git_cmd('rebase', '--abort'))
+    utils.silent_call(git_cmd('merge', '--abort'))
 
-        utils.logged_call(git_cmd('fetch', 'origin', state.base_ref,
-                                  'pull/{}/head'.format(state.num)))
-        utils.silent_call(git_cmd('rebase', '--abort'))
-        utils.silent_call(git_cmd('merge', '--abort'))
-
-        if repo_cfg.get('linear', False):
+    if repo_cfg.get('linear', False):
+        utils.logged_call(
+            git_cmd('checkout', '-B', branch, state.head_sha))
+        try:
+            args = [base_sha]
+            if repo_cfg.get('autosquash', False):
+                args += ['-i', '--autosquash']
             utils.logged_call(
-                git_cmd('checkout', '-B', branch, state.head_sha))
-            try:
-                args = [base_sha]
-                if repo_cfg.get('autosquash', False):
-                    args += ['-i', '--autosquash']
-                utils.logged_call(git_cmd('-c',
-                                          'user.name=' + git_cfg['name'],
-                                          '-c',
-                                          'user.email=' + git_cfg['email'],
-                                          'rebase',
-                                          *args))
-            except subprocess.CalledProcessError:
-                if repo_cfg.get('autosquash', False):
-                    utils.silent_call(git_cmd('rebase', '--abort'))
-                    if utils.silent_call(git_cmd('rebase', base_sha)) == 0:
-                        desc = 'Auto-squashing failed'
-            else:
-                ap = '<try>' if state.try_ else state.approved_by
-                text = '\nCloses: #{}\nApproved by: {}'.format(state.num, ap)
-                msg_code = 'cat && echo {}'.format(shlex.quote(text))
-                env_code = 'export GIT_COMMITTER_NAME={} && export GIT_COMMITTER_EMAIL={} && unset GIT_COMMITTER_DATE'.format(shlex.quote(git_cfg['name']), shlex.quote(git_cfg['email']))  # noqa
-                utils.logged_call(git_cmd('filter-branch', '-f',
-                                          '--msg-filter', msg_code,
-                                          '--env-filter', env_code,
-                                          '{}..'.format(base_sha)))
+                git_cmd(
+                    '-c',
+                    'user.name=' + git_cfg['name'],
+                    '-c',
+                    'user.email=' + git_cfg['email'],
+                    'rebase',
+                    *args,
+                )
+            )
+        except subprocess.CalledProcessError:
+            if repo_cfg.get('autosquash', False):
+                utils.silent_call(git_cmd('rebase', '--abort'))
+                if utils.silent_call(git_cmd('rebase', base_sha)) == 0:
+                    desc = 'Auto-squashing failed'
+        else:
+            ap = '<try>' if state.try_ else state.approved_by
+            text = '\nCloses: #{}\nApproved by: {}'.format(state.num, ap)
+            msg_code = 'cat && echo {}'.format(shlex.quote(text))
+            env_code = 'export GIT_COMMITTER_NAME={} && export GIT_COMMITTER_EMAIL={} && unset GIT_COMMITTER_DATE'.format(shlex.quote(git_cfg['name']), shlex.quote(git_cfg['email']))  # noqa
+            utils.logged_call(git_cmd('filter-branch', '-f',
+                                      '--msg-filter', msg_code,
+                                      '--env-filter', env_code,
+                                      '{}..'.format(base_sha)))
 
+            if ensure_merge_equal:
+                if not branch_equal_to_merge(git_cmd, state, branch):
+                    return ''
+
+            return git_push(git_cmd, branch, state)
+    else:
+        utils.logged_call(git_cmd(
+            'checkout',
+            '-B',
+            'homu-tmp',
+            state.head_sha))
+
+        ok = True
+        if repo_cfg.get('autosquash', False):
+            try:
+                merge_base_sha = subprocess.check_output(
+                    git_cmd(
+                        'merge-base',
+                        base_sha,
+                        state.head_sha)).decode('ascii').strip()
+                utils.logged_call(git_cmd(
+                    '-c',
+                    'user.name=' + git_cfg['name'],
+                    '-c',
+                    'user.email=' + git_cfg['email'],
+                    'rebase',
+                    '-i',
+                    '--autosquash',
+                    '--onto',
+                    merge_base_sha, base_sha))
+            except subprocess.CalledProcessError:
+                desc = 'Auto-squashing failed'
+                ok = False
+
+        if ok:
+            utils.logged_call(git_cmd('checkout', '-B', branch, base_sha))
+            try:
+                utils.logged_call(git_cmd(
+                    '-c',
+                    'user.name=' + git_cfg['name'],
+                    '-c',
+                    'user.email=' + git_cfg['email'],
+                    'merge',
+                    'heads/homu-tmp',
+                    '--no-ff',
+                    '-m',
+                    merge_msg))
+            except subprocess.CalledProcessError:
+                pass
+            else:
                 if ensure_merge_equal:
                     if not branch_equal_to_merge(git_cmd, state, branch):
                         return ''
 
                 return git_push(git_cmd, branch, state)
-        else:
-            utils.logged_call(git_cmd(
-                'checkout',
-                '-B',
-                'homu-tmp',
-                state.head_sha))
-
-            ok = True
-            if repo_cfg.get('autosquash', False):
-                try:
-                    merge_base_sha = subprocess.check_output(
-                        git_cmd(
-                            'merge-base',
-                            base_sha,
-                            state.head_sha)).decode('ascii').strip()
-                    utils.logged_call(git_cmd(
-                        '-c',
-                        'user.name=' + git_cfg['name'],
-                        '-c',
-                        'user.email=' + git_cfg['email'],
-                        'rebase',
-                        '-i',
-                        '--autosquash',
-                        '--onto',
-                        merge_base_sha, base_sha))
-                except subprocess.CalledProcessError:
-                    desc = 'Auto-squashing failed'
-                    ok = False
-
-            if ok:
-                utils.logged_call(git_cmd('checkout', '-B', branch, base_sha))
-                try:
-                    utils.logged_call(git_cmd(
-                        '-c',
-                        'user.name=' + git_cfg['name'],
-                        '-c',
-                        'user.email=' + git_cfg['email'],
-                        'merge',
-                        'heads/homu-tmp',
-                        '--no-ff',
-                        '-m',
-                        merge_msg))
-                except subprocess.CalledProcessError:
-                    pass
-                else:
-                    if ensure_merge_equal:
-                        if not branch_equal_to_merge(git_cmd, state, branch):
-                            return ''
-
-                    return git_push(git_cmd, branch, state)
-    else:
-        if repo_cfg.get('linear', False) or repo_cfg.get('autosquash', False):
-            raise RuntimeError('local_git must be turned on to use this feature')  # noqa
-
-        # if we're merging using the GitHub API, we have no way to predict
-        # with certainty what the final result will be so make sure the caller
-        # isn't asking us to keep any promises (see also discussions at
-        # https://github.com/servo/homu/pull/57)
-        assert ensure_merge_equal is False
-
-        if branch != state.base_ref:
-            github.set_ref(
-                state.get_repo(),
-                'heads/' + branch,
-                base_sha,
-                force=True,
-            )
-        return github.merge(
-            state.get_repo(), branch, state.head_sha, merge_msg,
-        )
 
     state.set_status('error')
-    github.create_status(
+    gitlab.create_status(
         state.get_repo(),
         state.head_sha,
         'error',
@@ -938,8 +920,8 @@ def pull_is_rebased(state, repo_cfg, git_cfg, base_sha):
 
 
 # We could fetch this from GitHub instead, but that API is being deprecated:
-# https://developer.github.com/changes/2013-04-25-deprecating-merge-commit-sha/
-def get_github_merge_sha(state, repo_cfg, git_cfg):
+# https://developer.gitlab.com/changes/2013-04-25-deprecating-merge-commit-sha/
+def get_gitlab.merge_sha(state, repo_cfg, git_cfg):
     assert git_cfg['local_git']
     git_cmd = init_local_git_cmds(repo_cfg, git_cfg)
 
@@ -974,7 +956,7 @@ def do_exemption_merge(state, logger, repo_cfg, git_cfg, url, check_merge,
     desc = 'Test exempted'
 
     state.set_status('success')
-    github.create_status(
+    gitlab.create_status(
         state.get_repo(), state.head_sha, 'success',
         url, desc, context='homu',
     )
@@ -990,7 +972,7 @@ def do_exemption_merge(state, logger, repo_cfg, git_cfg, url, check_merge,
 def try_travis_exemption(state, logger, repo_cfg, git_cfg):
 
     travis_info = None
-    for info in github.iter_statuses(state.get_repo(), state.head_sha):
+    for info in gitlab.iter_statuses(state.get_repo(), state.head_sha):
         if info.context == 'continuous-integration/travis-ci/pr':
             travis_info = info
             break
@@ -1013,16 +995,16 @@ def try_travis_exemption(state, logger, repo_cfg, git_cfg):
 
     repo = state.get_repo()
     travis_sha = json.loads(res.text)['commit']
-    travis_commit = github.get_commit(state.get_repo(), travis_sha)
+    travis_commit = gitlab.get_commit(state.get_repo(), travis_sha)
 
     if not travis_commit:
         return False
 
-    base_sha = github.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
-    travis_commit_parent_shas = github.get_parent_shas(repo, travis_sha)
+    base_sha = gitlab.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
+    travis_commit_parent_shas = gitlab.get_parent_shas(repo, travis_sha)
     if (travis_commit_parent_shas[0] == base_sha and
             travis_commit_parent_shas[1] == state.head_sha):
-        # make sure we check against the github merge sha before pushing
+        # make sure we check against the gitlab.merge sha before pushing
         return do_exemption_merge(state, logger, repo_cfg, git_cfg,
                                   travis_info.target_url, True,
                                   "merge already tested by Travis CI")
@@ -1059,7 +1041,7 @@ def try_status_exemption(state, logger, repo_cfg, git_cfg):
 
     # let's first check that all the statuses we want are set to success
     statuses_pass = set()
-    for info in github.iter_statuses(state.get_repo(), state.head_sha):
+    for info in gitlab.iter_statuses(state.get_repo(), state.head_sha):
         if info.context in status_equivalences and info.state == 'success':
             statuses_pass.add(status_equivalences[info.context])
 
@@ -1067,28 +1049,28 @@ def try_status_exemption(state, logger, repo_cfg, git_cfg):
         return False
 
     # is the PR fully rebased?
-    base_sha = github.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
+    base_sha = gitlab.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
     if pull_is_rebased(state, repo_cfg, git_cfg, base_sha):
         return do_exemption_merge(state, logger, repo_cfg, git_cfg, '', False,
                                   "pull fully rebased and already tested")
 
-    # check if we can use the github merge sha as proof
-    merge_sha = get_github_merge_sha(state, repo_cfg, git_cfg)
+    # check if we can use the gitlab.merge sha as proof
+    merge_sha = get_gitlab.merge_sha(state, repo_cfg, git_cfg)
     if merge_sha is None:
         return False
 
     statuses_merge_pass = set()
-    for info in github.iter_statuses(state.get_repo(), merge_sha):
+    for info in gitlab.iter_statuses(state.get_repo(), merge_sha):
         if info.context in status_equivalences and info.state == 'success':
             statuses_merge_pass.add(status_equivalences[info.context])
 
-    merge_commit_parent_shas = github.get_parent_shas(
+    merge_commit_parent_shas = gitlab.get_parent_shas(
         state.get_repo(), merge_sha,
     )
     if (statuses_all == statuses_merge_pass and
             merge_commit_parent_shas[0] == base_sha and
             merge_commit_parent_shas[1] == state.head_sha):
-        # make sure we check against the github merge sha before pushing
+        # make sure we check against the gitlab.merge sha before pushing
         return do_exemption_merge(state, logger, repo_cfg, git_cfg, '', True,
                                   "merge already tested")
 
@@ -1101,7 +1083,7 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
 
     lazy_debug(logger, lambda: "start_build on {!r}".format(state.get_repo()))
 
-    pull_request_sha = github.get_pull_request_sha(state.get_repo(), state.num)
+    pull_request_sha = gitlab.get_pull_request_sha(state.get_repo(), state.num)
     assert state.head_sha == pull_request_sha
 
     repo_cfg = repo_cfgs[state.repo_label]
@@ -1180,7 +1162,7 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
         state.head_sha,
         state.merge_sha,
     )
-    github.create_status(
+    gitlab.create_status(
         state.get_repo(),
         state.head_sha,
         'pending',
@@ -1215,13 +1197,13 @@ def start_rebuild(state, repo_cfgs):
         return False
 
     repo = state.get_repo()
-    base_sha = github.get_ref_sha(repo, 'heads/' + state.base_ref)
-    parent_shas = github.get_parent_shas(repo, state.merge_sha)
+    base_sha = gitlab.get_ref_sha(repo, 'heads/' + state.base_ref)
+    parent_shas = gitlab.get_parent_shas(repo, state.merge_sha)
 
     if base_sha not in parent_shas:
         return False
 
-    github.set_ref(
+    gitlab.set_ref(
         state.get_repo(),
         'tags/homu-tmp',
         state.merge_sha,
@@ -1257,7 +1239,7 @@ def start_rebuild(state, repo_cfgs):
     msg_3 = ' are reusable. Rebuilding'
     msg_4 = ' only {}'.format(', '.join('[{}]({})'.format(builder, url) for builder, url in builders))  # noqa
 
-    github.create_status(
+    gitlab.create_status(
         state.get_repo(),
         state.head_sha,
         'pending',
@@ -1324,7 +1306,7 @@ def fetch_mergeability(mergeable_que):
             if state.status == 'success':
                 continue
 
-            mergeable = github.is_pull_request_mergeable(
+            mergeable = gitlab.is_pull_request_mergeable(
                 state.get_repo(), state.num,
             )
 
@@ -1359,7 +1341,7 @@ def fetch_mergeability(mergeable_que):
 def synchronize(repo_label, repo_cfg, logger, gh, states, repos, db, mergeable_que, my_username, repo_labels):  # noqa
     logger.info('Synchronizing {}...'.format(repo_label))
 
-    repo = gh.repository(repo_cfg['owner'], repo_cfg['name'])
+    repo = gitlab.get_repository(gh, repo_cfg['owner'], repo_cfg['name'])
 
     db_query(db, 'DELETE FROM pull WHERE repo = ?', [repo_label])
     db_query(db, 'DELETE FROM build_res WHERE repo = ?', [repo_label])
@@ -1385,7 +1367,7 @@ def synchronize(repo_label, repo_cfg, logger, gh, states, repos, db, mergeable_q
             status = row[0]
         else:
             status = ''
-            for info in github.iter_statuses(repo, pull.head.sha):
+            for info in gitlab.iter_statuses(repo, pull.head.sha):
                 if info.context == 'homu':
                     status = info.state
                     break
@@ -1476,7 +1458,7 @@ def main():
             raise
     global_cfg = cfg
 
-    gh = github.login(token=cfg['github']['access_token'])
+    gh = gitlab.login(token=cfg['gitlab.]['access_token'])
     user = gh.user()
     cfg_git = cfg.get('git', {})
     user_email = cfg_git.get('email')
