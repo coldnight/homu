@@ -492,7 +492,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                             state.merge_sha,
                         )
                     except gitlab.CommonError:
-                        logger.exception()
+                        logger.exception("Merge Error")
                         gitlab.create_status(
                             state.get_repo(),
                             state.merge_sha,
