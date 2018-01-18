@@ -1458,7 +1458,7 @@ def main():
             raise
     global_cfg = cfg
 
-    gh = gitlab.login(token=cfg['gitlab']['access_token'])
+    gh = gitlab.login(cfg['gitlab']['access_token'])
     user = gh.user()
     cfg_git = cfg.get('git', {})
     user_email = cfg_git.get('email')
