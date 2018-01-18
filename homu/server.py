@@ -309,7 +309,7 @@ def gitlab_hook():
             state.head_ref = owner + mr["source_branch"]  # noqa
             state.base_ref = mr["target_branch"]
             state.set_mergeable(mr["merge_status"] == "can_be_merged")
-            assignee = mr["assignee"]["username"]
+            assignee = mr["assignee"]["username"] if mr.get("assignee") else ""
             state.assignee = (assignee or '')
 
             found = False
