@@ -37,6 +37,7 @@ INTERRUPTED_BY_HOMU_RE = re.compile(r'Interrupted by Homu \((.+?)\)')
 DEFAULT_TEST_TIMEOUT = 3600 * 10
 
 global_cfg = {}
+global_git_cfg = {}
 
 
 @contextmanager
@@ -312,7 +313,7 @@ class PullReqState:
 
         issue = self.get_issue()
         title = issue.title
-        # We tell gitlab.to close the PR via the commit message, but it
+        # We tell gitlab to close the PR via the commit message, but it
         # doesn't know that constitutes a merge.  Edit the title so that it's
         # clearer.
         merged_prefix = '[merged] '
@@ -413,7 +414,7 @@ PORTAL_TURRET_IMAGE = "https://cloud.gitlab.sercontent.com/assets/1617736/222229
 
 def parse_commands(body, username, repo_cfg, state, my_username, db, states,
                    *, realtime=False, sha=''):
-    global global_cfg
+    global global_cfg, global_git_cfg
     state_changed = False
 
     _reviewer_auth_verified = functools.partial(
@@ -1439,7 +1440,7 @@ def arguments():
 
 
 def main():
-    global global_cfg
+    global global_cfg, global_git_cfg
     args = arguments()
 
     logger = logging.getLogger('homu')
@@ -1477,7 +1478,7 @@ def main():
     my_username = user.username
     repo_labels = {}
     mergeable_que = Queue()
-    git_cfg = {
+    global_git_cfg = git_cfg = {
         'name': user_name,
         'email': user_email,
         'ssh_key': cfg_git.get('ssh_key', ''),

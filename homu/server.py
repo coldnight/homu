@@ -1,6 +1,7 @@
 import hmac
 import json
 import urllib.parse
+import subprocess
 from .main import (
     PullReqState,
     parse_commands,
@@ -242,7 +243,7 @@ def rollup(user_gh, state, repo_label, repo_cfg, repo):
             successes.append(state.num)
 
     title = 'Rollup of {} pull requests'.format(len(successes))
-    body = '- Successful merges: {}\n- Failed merges: {}'.format(
+    body = '- Successful merges: {}\n\n- Failed merges: {}'.format(
         ', '.join('#{}'.format(x) for x in successes),
         ', '.join('#{}'.format(x) for x in failures),
     )
@@ -480,33 +481,22 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
             test_comment = ':sunny: {} - {}'.format(desc, urls)
 
             if state.approved_by and not state.try_:
-                comment = (test_comment + '\n' +
-                           'Approved by: {}\nPushing {} to {}...'
+                comment = (test_comment + '\n\n' +
+                           'Approved by: {}\n\nPushing {} to {}...'
                            ).format(state.approved_by, state.merge_sha,
                                     state.base_ref)
+                from .main import init_local_git_cmds
+                from .main import global_git_cfg
+                from .main import git_push
+                git_cmd = init_local_git_cmds(repo_cfg, global_git_cfg)
                 state.add_comment(comment)
                 try:
-                    try:
-                        gitlab.set_ref(
-                            state.get_repo(), 'heads/' + state.base_ref,
-                            state.merge_sha,
-                        )
-                    except gitlab.CommonError:
-                        logger.exception("Merge Error")
-                        gitlab.create_status(
-                            state.get_repo(),
-                            state.merge_sha,
-                            'success', '',
-                            'Branch protection bypassed',
-                            context='homu')
-                        gitlab.set_ref(
-                            state.get_repo(), 'heads/' +
-                            state.base_ref, state.merge_sha,
-                        )
-
-                    state.fake_merge(repo_cfg)
-
-                except gitlab.CommonError as e:
+                    utils.logged_call(git_cmd('fetch', 'origin', state.base_ref))   # noqa
+                    utils.logged_call(git_cmd("checkout", state.base_ref))          # noqa
+                    utils.logged_call(git_cmd("merge", "--ff-only", "origin/" + state.base_ref))    # noqa
+                    utils.logged_call(git_cmd("merge", "--ff-only", state.merge_sha))           # noqa
+                    git_push(git_cmd, state.base_ref, state)
+                except subprocess.CalledProcessError as e:
                     state.set_status('error')
                     desc = ('Test was successful, but fast-forwarding failed:'
                             ' {}'.format(e))
@@ -518,7 +508,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
 
                     state.add_comment(':eyes: ' + desc)
             else:
-                comment = (test_comment + '\n' +
+                comment = (test_comment + '\n\n' +
                            'State: approved={} try={}'
                            ).format(state.approved_by, state.try_)
                 state.add_comment(comment)
