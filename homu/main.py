@@ -1,10 +1,10 @@
 import argparse
-import github3
 import toml
 import json
 import re
 import functools
 from . import utils
+from . import github
 from .utils import lazy_debug
 import logging
 from threading import Thread, Lock, Timer
@@ -339,7 +339,7 @@ class PullReqState:
         self.set_status('failure')
 
         desc = 'Test timed out'
-        utils.github_create_status(
+        github.create_status(
             self.get_repo(),
             self.head_sha,
             'failure',
@@ -376,7 +376,7 @@ def verify_auth(username, repo_cfg, state, auth, realtime, my_username):
     is_reviewer = False
     auth_collaborators = repo_cfg.get('auth_collaborators', False)
     if auth_collaborators:
-        is_reviewer = state.get_repo().is_collaborator(username)
+        is_reviewer = github.is_collaborator(state.get_repo(), username)
     if not is_reviewer:
         is_reviewer = username in repo_cfg.get('reviewers', [])
     if not is_reviewer:
@@ -476,7 +476,10 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
                         .format(state.head_sha)
                     )
 
-                state.head_sha = state.get_repo().pull_request(state.num).head.sha  # noqa
+                state.head_sha = github.get_pull_request_sha(
+                    state.get_repo(),
+                    state.num,
+                )
                 state.save()
 
                 assert any(x != '0' for x in state.head_sha)
@@ -588,7 +591,9 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
             if not _reviewer_auth_verified():
                 continue
 
-            state.delegate = state.get_repo().pull_request(state.num).user.login  # noqa
+            state.delegate = github.get_pull_request_user(
+                state.get_repo(), state.num,
+            )
             state.save()
 
             if realtime:
@@ -729,7 +734,7 @@ def git_push(git_cmd, branch, state):
         utils.logged_call(git_cmd('push', '-f', 'origin', 'homu-tmp'))
 
         def inner():
-            utils.github_create_status(
+            github.create_status(
                 state.get_repo(),
                 merge_sha,
                 'success',
@@ -776,7 +781,7 @@ def branch_equal_to_merge(git_cmd, state, branch):
 
 def create_merge(state, repo_cfg, branch, logger, git_cfg,
                  ensure_merge_equal=False):
-    base_sha = state.get_repo().ref('heads/' + state.base_ref).object.sha
+    base_sha = github.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
 
     state.refresh()
 
@@ -789,7 +794,8 @@ def create_merge(state, repo_cfg, branch, logger, git_cfg,
         state.head_ref,
         '<try>' if state.try_ else state.approved_by,
         state.title,
-        state.body)
+        state.body,
+    )
 
     desc = 'Merge conflict'
 
@@ -896,26 +902,18 @@ def create_merge(state, repo_cfg, branch, logger, git_cfg,
         assert ensure_merge_equal is False
 
         if branch != state.base_ref:
-            utils.github_set_ref(
+            github.set_ref(
                 state.get_repo(),
                 'heads/' + branch,
                 base_sha,
                 force=True,
             )
-
-        try:
-            merge_commit = state.get_repo().merge(
-                branch,
-                state.head_sha,
-                merge_msg)
-        except github3.models.GitHubError as e:
-            if e.code != 409:
-                raise
-        else:
-            return merge_commit.sha if merge_commit else ''
+        return github.merge(
+            state.get_repo(), branch, state.head_sha, merge_msg,
+        )
 
     state.set_status('error')
-    utils.github_create_status(
+    github.create_status(
         state.get_repo(),
         state.head_sha,
         'error',
@@ -976,8 +974,10 @@ def do_exemption_merge(state, logger, repo_cfg, git_cfg, url, check_merge,
     desc = 'Test exempted'
 
     state.set_status('success')
-    utils.github_create_status(state.get_repo(), state.head_sha, 'success',
-                               url, desc, context='homu')
+    github.create_status(
+        state.get_repo(), state.head_sha, 'success',
+        url, desc, context='homu',
+    )
     state.add_comment(':zap: {}: {}.'.format(desc, reason))
 
     state.merge_sha = merge_sha
@@ -990,7 +990,7 @@ def do_exemption_merge(state, logger, repo_cfg, git_cfg, url, check_merge,
 def try_travis_exemption(state, logger, repo_cfg, git_cfg):
 
     travis_info = None
-    for info in utils.github_iter_statuses(state.get_repo(), state.head_sha):
+    for info in github.iter_statuses(state.get_repo(), state.head_sha):
         if info.context == 'continuous-integration/travis-ci/pr':
             travis_info = info
             break
@@ -1011,16 +1011,17 @@ def try_travis_exemption(state, logger, repo_cfg, git_cfg):
         print('* Unable to gather build info from Travis CI: {}'.format(ex))
         return False
 
+    repo = state.get_repo()
     travis_sha = json.loads(res.text)['commit']
-    travis_commit = state.get_repo().commit(travis_sha)
+    travis_commit = github.get_commit(state.get_repo(), travis_sha)
 
     if not travis_commit:
         return False
 
-    base_sha = state.get_repo().ref('heads/' + state.base_ref).object.sha
-
-    if (travis_commit.parents[0]['sha'] == base_sha and
-            travis_commit.parents[1]['sha'] == state.head_sha):
+    base_sha = github.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
+    travis_commit_parent_shas = github.get_parent_shas(repo, travis_sha)
+    if (travis_commit_parent_shas[0] == base_sha and
+            travis_commit_parent_shas[1] == state.head_sha):
         # make sure we check against the github merge sha before pushing
         return do_exemption_merge(state, logger, repo_cfg, git_cfg,
                                   travis_info.target_url, True,
@@ -1058,7 +1059,7 @@ def try_status_exemption(state, logger, repo_cfg, git_cfg):
 
     # let's first check that all the statuses we want are set to success
     statuses_pass = set()
-    for info in utils.github_iter_statuses(state.get_repo(), state.head_sha):
+    for info in github.iter_statuses(state.get_repo(), state.head_sha):
         if info.context in status_equivalences and info.state == 'success':
             statuses_pass.add(status_equivalences[info.context])
 
@@ -1066,7 +1067,7 @@ def try_status_exemption(state, logger, repo_cfg, git_cfg):
         return False
 
     # is the PR fully rebased?
-    base_sha = state.get_repo().ref('heads/' + state.base_ref).object.sha
+    base_sha = github.get_ref_sha(state.get_repo(), 'heads/' + state.base_ref)
     if pull_is_rebased(state, repo_cfg, git_cfg, base_sha):
         return do_exemption_merge(state, logger, repo_cfg, git_cfg, '', False,
                                   "pull fully rebased and already tested")
@@ -1077,14 +1078,16 @@ def try_status_exemption(state, logger, repo_cfg, git_cfg):
         return False
 
     statuses_merge_pass = set()
-    for info in utils.github_iter_statuses(state.get_repo(), merge_sha):
+    for info in github.iter_statuses(state.get_repo(), merge_sha):
         if info.context in status_equivalences and info.state == 'success':
             statuses_merge_pass.add(status_equivalences[info.context])
 
-    merge_commit = state.get_repo().commit(merge_sha)
+    merge_commit_parent_shas = github.get_parent_shas(
+        state.get_repo(), merge_sha,
+    )
     if (statuses_all == statuses_merge_pass and
-            merge_commit.parents[0]['sha'] == base_sha and
-            merge_commit.parents[1]['sha'] == state.head_sha):
+            merge_commit_parent_shas[0] == base_sha and
+            merge_commit_parent_shas[1] == state.head_sha):
         # make sure we check against the github merge sha before pushing
         return do_exemption_merge(state, logger, repo_cfg, git_cfg, '', True,
                                   "merge already tested")
@@ -1098,7 +1101,8 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
 
     lazy_debug(logger, lambda: "start_build on {!r}".format(state.get_repo()))
 
-    assert state.head_sha == state.get_repo().pull_request(state.num).head.sha
+    pull_request_sha = github.get_pull_request_sha(state.get_repo(), state.num)
+    assert state.head_sha == pull_request_sha
 
     repo_cfg = repo_cfgs[state.repo_label]
 
@@ -1176,7 +1180,7 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
         state.head_sha,
         state.merge_sha,
     )
-    utils.github_create_status(
+    github.create_status(
         state.get_repo(),
         state.head_sha,
         'pending',
@@ -1210,14 +1214,14 @@ def start_rebuild(state, repo_cfgs):
     if not builders or not succ_builders:
         return False
 
-    base_sha = state.get_repo().ref('heads/' + state.base_ref).object.sha
-    _parents = state.get_repo().commit(state.merge_sha).parents
-    parent_shas = [x['sha'] for x in _parents]
+    repo = state.get_repo()
+    base_sha = github.get_ref_sha(repo, 'heads/' + state.base_ref)
+    parent_shas = github.get_parent_shas(repo, state.merge_sha)
 
     if base_sha not in parent_shas:
         return False
 
-    utils.github_set_ref(
+    github.set_ref(
         state.get_repo(),
         'tags/homu-tmp',
         state.merge_sha,
@@ -1253,7 +1257,7 @@ def start_rebuild(state, repo_cfgs):
     msg_3 = ' are reusable. Rebuilding'
     msg_4 = ' only {}'.format(', '.join('[{}]({})'.format(builder, url) for builder, url in builders))  # noqa
 
-    utils.github_create_status(
+    github.create_status(
         state.get_repo(),
         state.head_sha,
         'pending',
@@ -1320,11 +1324,9 @@ def fetch_mergeability(mergeable_que):
             if state.status == 'success':
                 continue
 
-            pull_request = state.get_repo().pull_request(state.num)
-            if pull_request is None or pull_request.mergeable is None:
-                time.sleep(5)
-                pull_request = state.get_repo().pull_request(state.num)
-            mergeable = pull_request is not None and pull_request.mergeable
+            mergeable = github.is_pull_request_mergeable(
+                state.get_repo(), state.num,
+            )
 
             if state.mergeable is True and mergeable is False:
                 if cause:
@@ -1383,7 +1385,7 @@ def synchronize(repo_label, repo_cfg, logger, gh, states, repos, db, mergeable_q
             status = row[0]
         else:
             status = ''
-            for info in utils.github_iter_statuses(repo, pull.head.sha):
+            for info in github.iter_statuses(repo, pull.head.sha):
                 if info.context == 'homu':
                     status = info.state
                     break
@@ -1474,7 +1476,7 @@ def main():
             raise
     global_cfg = cfg
 
-    gh = github3.login(token=cfg['github']['access_token'])
+    gh = github.login(token=cfg['github']['access_token'])
     user = gh.user()
     cfg_git = cfg.get('git', {})
     user_email = cfg_git.get('email')

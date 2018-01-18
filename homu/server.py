@@ -9,8 +9,8 @@ from .main import (
     synchronize,
 )
 from . import utils
+from . import github
 from .utils import lazy_debug
-import github3
 import jinja2
 import requests
 import pkg_resources
@@ -172,7 +172,7 @@ def callback():
     repo_cfg = g.repo_cfgs[repo_label]
     repo = get_repo(repo_label, repo_cfg)
 
-    user_gh = github3.login(token=token)
+    user_gh = github.login(token)
 
     if state['cmd'] == 'rollup':
         return rollup(user_gh, state, repo_label, repo_cfg, repo)
@@ -203,7 +203,7 @@ def rollup(user_gh, state, repo_label, repo_cfg, repo):
     base_ref = rollup_states[0].base_ref
 
     base_sha = repo.ref('heads/' + base_ref).object.sha
-    utils.github_set_ref(
+    github.set_ref(
         user_repo,
         'heads/' + repo_cfg.get('branch', {}).get('rollup', 'rollup'),
         base_sha,
@@ -229,7 +229,7 @@ def rollup(user_gh, state, repo_label, repo_cfg, repo):
         try:
             rollup = repo_cfg.get('branch', {}).get('rollup', 'rollup')
             user_repo.merge(rollup, state.head_sha, merge_msg)
-        except github3.models.GitHubError as e:
+        except github.CommonError as e:
             if e.code != 409:
                 raise
 
@@ -251,14 +251,14 @@ def rollup(user_gh, state, repo_label, repo_cfg, repo):
             user_repo.owner.login + ':' + rollup,
             body,
         )
-    except github3.models.GitHubError as e:
+    except github.CommonError as e:
         return e.response.text
     else:
         redirect(pull.html_url)
 
 
 @post('/github')
-def github():
+def github_hook():
     logger = g.logger.getChild('github')
 
     response.content_type = 'text/plain'
@@ -341,7 +341,9 @@ def github():
 
             if action == 'reopened':
                 # FIXME: Review comments are ignored here
-                for c in state.get_repo().issue(pull_num).iter_comments():
+                for c in github.iter_issue_comments(
+                        state.get_repo(), pull_num
+                ):
                     found = parse_commands(
                         c.body,
                         c.user.login,
@@ -353,8 +355,10 @@ def github():
                     ) or found
 
                 status = ''
-                for info in utils.github_iter_statuses(state.get_repo(),
-                                                       state.head_sha):
+                for info in github.iter_statuses(
+                        state.get_repo(),
+                        state.head_sha,
+                ):
                     if info.context == 'homu':
                         status = info.state
                         break
@@ -372,7 +376,7 @@ def github():
             state = g.states[repo_label][pull_num]
             if hasattr(state, 'fake_merge_sha'):
                 def inner():
-                    utils.github_set_ref(
+                    github.set_ref(
                         state.get_repo(),
                         'heads/' + state.base_ref,
                         state.merge_sha,
@@ -487,8 +491,10 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
         if all(x['res'] for x in state.build_res.values()):
             state.set_status('success')
             desc = 'Test successful'
-            utils.github_create_status(state.get_repo(), state.head_sha,
-                                       'success', url, desc, context='homu')
+            github.create_status(
+                state.get_repo(), state.head_sha,
+                'success', url, desc, context='homu',
+            )
 
             urls = ', '.join('[{}]({})'.format(builder, x['url']) for builder, x in sorted(state.build_res.items()))  # noqa
             test_comment = ':sunny: {} - {}'.format(desc, urls)
@@ -501,27 +507,33 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                 state.add_comment(comment)
                 try:
                     try:
-                        utils.github_set_ref(state.get_repo(), 'heads/' +
-                                             state.base_ref, state.merge_sha)
-                    except github3.models.GitHubError:
-                        utils.github_create_status(
+                        github.set_ref(
+                            state.get_repo(), 'heads/' +
+                            state.base_ref, state.merge_sha,
+                        )
+                    except github.CommonError:
+                        github.create_status(
                             state.get_repo(),
                             state.merge_sha,
                             'success', '',
                             'Branch protection bypassed',
                             context='homu')
-                        utils.github_set_ref(state.get_repo(), 'heads/' +
-                                             state.base_ref, state.merge_sha)
+                        github.set_ref(
+                            state.get_repo(), 'heads/' +
+                            state.base_ref, state.merge_sha,
+                        )
 
                     state.fake_merge(repo_cfg)
 
-                except github3.models.GitHubError as e:
+                except github.CommonError as e:
                     state.set_status('error')
                     desc = ('Test was successful, but fast-forwarding failed:'
                             ' {}'.format(e))
-                    utils.github_create_status(state.get_repo(),
-                                               state.head_sha, 'error', url,
-                                               desc, context='homu')
+                    github.create_status(
+                        state.get_repo(),
+                        state.head_sha, 'error', url,
+                        desc, context='homu',
+                    )
 
                     state.add_comment(':eyes: ' + desc)
             else:
@@ -534,8 +546,10 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
         if state.status == 'pending':
             state.set_status('failure')
             desc = 'Test failed'
-            utils.github_create_status(state.get_repo(), state.head_sha,
-                                       'failure', url, desc, context='homu')
+            github.create_status(
+                state.get_repo(), state.head_sha,
+                'failure', url, desc, context='homu',
+            )
 
             state.add_comment(':broken_heart: {} - [{}]({})'.format(desc,
                                                                     builder,
@@ -625,11 +639,13 @@ def buildbot():
                                 desc = (':snowman: The build was interrupted '
                                         'to prioritize another pull request.')
                                 state.add_comment(desc)
-                                utils.github_create_status(state.get_repo(),
-                                                           state.head_sha,
-                                                           'error', url,
-                                                           desc,
-                                                           context='homu')
+                                github.create_status(
+                                    state.get_repo(),
+                                    state.head_sha,
+                                    'error', url,
+                                    desc,
+                                    context='homu',
+                                )
 
                                 g.queue_handler()
 
