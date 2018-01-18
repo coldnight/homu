@@ -921,7 +921,7 @@ def pull_is_rebased(state, repo_cfg, git_cfg, base_sha):
 
 # We could fetch this from GitHub instead, but that API is being deprecated:
 # https://developer.gitlab.com/changes/2013-04-25-deprecating-merge-commit-sha/
-def get_gitlab.merge_sha(state, repo_cfg, git_cfg):
+def get_gitlab_merge_sha(state, repo_cfg, git_cfg):
     assert git_cfg['local_git']
     git_cmd = init_local_git_cmds(repo_cfg, git_cfg)
 
@@ -1055,7 +1055,7 @@ def try_status_exemption(state, logger, repo_cfg, git_cfg):
                                   "pull fully rebased and already tested")
 
     # check if we can use the gitlab.merge sha as proof
-    merge_sha = get_gitlab.merge_sha(state, repo_cfg, git_cfg)
+    merge_sha = get_gitlab_merge_sha(state, repo_cfg, git_cfg)
     if merge_sha is None:
         return False
 
@@ -1458,7 +1458,7 @@ def main():
             raise
     global_cfg = cfg
 
-    gh = gitlab.login(token=cfg['gitlab.]['access_token'])
+    gh = gitlab.login(token=cfg['gitlab']['access_token'])
     user = gh.user()
     cfg_git = cfg.get('git', {})
     user_email = cfg_git.get('email')

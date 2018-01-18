@@ -109,9 +109,11 @@ def queue(repo_label):
             'status': state.get_status(),
             'status_ext': status_ext,
             'priority': 'rollup' if state.rollup else state.priority,
-            'url': 'https://gitlab.com/{}/{}/pull/{}'.format(state.owner,
-                                                             state.name,
-                                                             state.num),
+            'url': 'https://gitlab.com/{}/{}/merge_requests/{}'.format(
+                state.owner,
+                state.name,
+                state.num
+            ),
             'num': state.num,
             'approved_by': state.approved_by,
             'title': state.title,
@@ -120,8 +122,10 @@ def queue(repo_label):
                           'no' if state.mergeable is False else ''),
             'assignee': state.assignee,
             'repo_label': state.repo_label,
-            'repo_url': 'https://gitlab.com/{}/{}'.format(state.owner,
-                                                          state.name),
+            'repo_url': 'https://gitlab.com/{}/{}'.format(
+                state.owner,
+                state.name
+            ),
             'greyed': "treeclosed" if treeclosed else "",
         })
 
@@ -130,7 +134,7 @@ def queue(repo_label):
         repo_label=repo_label,
         treeclosed=single_repo_closed,
         states=rows,
-        oauth_client_id=g.cfg['gitlab.]['app_client_id'],
+        oauth_client_id=g.cfg['gitlab']['app_client_id'],
         total=len(pull_states),
         approved=len([x for x in pull_states if x.approved_by]),
         rolled_up=len([x for x in pull_states if x.rollup]),
@@ -154,13 +158,13 @@ def callback():
 
     try:
         res = requests.post(oauth_url, data={
-            'client_id': g.cfg['gitlab.]['app_client_id'],
-            'client_secret': g.cfg['gitlab.]['app_client_secret'],
+            'client_id': g.cfg['gitlab']['app_client_id'],
+            'client_secret': g.cfg['gitlab']['app_client_secret'],
             'code': code,
         })
     except Exception as ex:
         logger.warn('/callback encountered an error '
-                    'during gitlab.oauth callback')
+                    'during gitlab oauth callback')
         # probably related to https://gitlab.com/pycqa/flake8/issues/42
         lazy_debug(logger, lambda: 'gitlab.oauth callback err: {}'.format(ex))  # noqa
         abort(502, 'Bad Gateway')
@@ -257,9 +261,9 @@ def rollup(user_gh, state, repo_label, repo_cfg, repo):
         redirect(pull.html_url)
 
 
-@post('/gitlab.)
-def gitlab.hook():
-    logger = g.logger.getChild('gitlab.)
+@post('/gitlab')
+def gitlab_hook():
+    logger = g.logger.getChild('gitlab')
 
     response.content_type = 'text/plain'
 
@@ -275,78 +279,48 @@ def gitlab.hook():
 
     hmac_method, hmac_sig = request.headers['X-Hub-Signature'].split('=')
     if hmac_sig != hmac.new(
-        repo_cfg['gitlab.]['secret'].encode('utf-8'),
+        repo_cfg['gitlab']['secret'].encode('utf-8'),
         payload,
         hmac_method,
     ).hexdigest():
         abort(400, 'Invalid signature')
 
-    event_type = request.headers['X-Github-Event']
+    event_type = request.headers['X-Gitlab-Event']
+    if event_type == "Note Hook":
+        if info["object_attributes"]["noteable_type"] == "MergeRequest":
+            event_type = "mr_comment"
 
-    if event_type == 'pull_request_review_comment':
-        action = info['action']
-        original_commit_id = info['comment']['original_commit_id']
-        head_sha = info['pull_request']['head']['sha']
-
-        if action == 'created' and original_commit_id == head_sha:
-            pull_num = info['pull_request']['number']
-            body = info['comment']['body']
-            username = info['sender']['login']
-
-            state = g.states[repo_label].get(pull_num)
-            if state:
-                state.title = info['pull_request']['title']
-                state.body = info['pull_request']['body']
-
-                if parse_commands(
-                    body,
-                    username,
-                    repo_cfg,
-                    state,
-                    g.my_username,
-                    g.db,
-                    g.states,
-                    realtime=True,
-                    sha=original_commit_id,
-                ):
-                    state.save()
-
-                    g.queue_handler()
-
-    elif event_type == 'pull_request':
-        action = info['action']
-        pull_num = info['number']
-        head_sha = info['pull_request']['head']['sha']
-
-        if action == 'synchronize':
-            state = g.states[repo_label][pull_num]
-            state.head_advanced(head_sha)
-
-            state.save()
-
-        elif action in ['opened', 'reopened']:
-            state = PullReqState(pull_num, head_sha, '', g.db, repo_label,
-                                 g.mergeable_que, g.gh,
-                                 info['repository']['owner']['login'],
-                                 info['repository']['name'], g.repos)
-            state.title = info['pull_request']['title']
-            state.body = info['pull_request']['body']
-            state.head_ref = info['pull_request']['head']['repo']['owner']['login'] + ':' + info['pull_request']['head']['ref']  # noqa
-            state.base_ref = info['pull_request']['base']['ref']
-            state.set_mergeable(info['pull_request']['mergeable'])
-            state.assignee = (info['pull_request']['assignee']['login'] if
-                              info['pull_request']['assignee'] else '')
+    if event_type == 'Merge Request Hook':
+        mr = info["object_attributes"]
+        action = mr['open']
+        pull_num = mr["id"]
+        head_sha = mr["last_commit"]["id"]
+        owner, name = mr["source"]["path_with_namespace"].split("/")
+        if action in ['open', 'reopen']:
+            state = PullReqState(
+                pull_num, head_sha, '', g.db, repo_label,
+                g.mergeable_que, g.gh,
+                owner, name,
+                g.repos,
+            )
+            state.title = mr['title']
+            state.body = mr['description']
+            state.head_ref = owner + mr["source_branch"]  # noqa
+            state.base_ref = mr["target_branch"]
+            state.set_mergeable(mr["merge_status"] == "can_be_merged")
+            assignee = mr["assignee"]["username"]
+            state.assignee = (assignee or '')
 
             found = False
 
-            if action == 'reopened':
+            if action == 'reopen':
                 # FIXME: Review comments are ignored here
                 for c in gitlab.iter_issue_comments(
                         state.get_repo(), pull_num
                 ):
                     found = parse_commands(
                         c.body,
-                        c.user.login,
+                        c.author.username,
                         repo_cfg,
                         state,
                         g.my_username,
@@ -372,7 +346,7 @@ def gitlab.hook():
             if found:
                 g.queue_handler()
 
-        elif action == 'closed':
+        elif action == 'close':
             state = g.states[repo_label][pull_num]
             if hasattr(state, 'fake_merge_sha'):
                 def inner():
@@ -402,24 +376,24 @@ def gitlab.hook():
 
             g.queue_handler()
 
-        elif action in ['assigned', 'unassigned']:
+        elif action in ['assigne', 'unassigne']:
             state = g.states[repo_label][pull_num]
-            state.assignee = (info['pull_request']['assignee']['login'] if
-                              info['pull_request']['assignee'] else '')
+            assignee = mr["assignee"]["username"]
+            state.assignee = assignee or ''
 
             state.save()
 
         else:
             lazy_debug(logger, lambda: 'Invalid pull_request action: {}'.format(action))  # noqa
 
-    elif event_type == 'push':
+    elif event_type == 'Push Hook':
         ref = info['ref'][len('refs/heads/'):]
 
         for state in list(g.states[repo_label].values()):
             if state.base_ref == ref:
                 state.set_mergeable(None, cause={
-                    'sha': info['head_commit']['id'],
-                    'title': info['head_commit']['message'].splitlines()[0],
+                    'sha': info['after'],
+                    'title': info['commits'][0]['message'].splitlines()[0],
                 })
 
             if state.head_sha == info['before']:
@@ -427,16 +401,16 @@ def gitlab.hook():
 
                 state.save()
 
-    elif event_type == 'issue_comment':
-        body = info['comment']['body']
-        username = info['comment']['user']['login']
-        pull_num = info['issue']['number']
-
+    elif event_type == 'mr_comment':
+        body = info["object_attributes"]["note"]
+        username = info['user']['username']
+        pull_num = info["merge_request"]["id"]
+        mr = info["merge_request"]
         state = g.states[repo_label].get(pull_num)
 
-        if 'pull_request' in info['issue'] and state:
-            state.title = info['issue']['title']
-            state.body = info['issue']['body']
+        if state:
+            state.title = mr['title']
+            state.body = mr['description']
 
             if parse_commands(
                 body,
@@ -452,7 +426,7 @@ def gitlab.hook():
 
                 g.queue_handler()
 
-    elif event_type == 'status':
+    elif event_type == 'Build Hook':
         try:
             state, repo_label = find_state(info['sha'])
         except ValueError:
@@ -461,10 +435,11 @@ def gitlab.hook():
         status_name = ""
         if 'status' in repo_cfg:
             for name, value in repo_cfg['status'].items():
-                if 'context' in value and value['context'] == info['context']:
+                if 'context' in value and value['context'] == info['build_name']:  # noqa
                     status_name = name
         if status_name is "":
             return 'OK'
+        state = info["build_status"]
 
         if info['state'] == 'pending':
             return 'OK'
@@ -472,9 +447,14 @@ def gitlab.hook():
         for row in info['branches']:
             if row['name'] == state.base_ref:
                 return 'OK'
-
-        report_build_res(info['state'] == 'success', info['target_url'],
-                         'status-' + status_name, state, logger, repo_cfg)
+        target_url = "{}/jobs/{}".format(
+            info["repository"]["homepage"],
+            info["build_id"],
+        )
+        report_build_res(
+            info['state'] == 'success', target_url,
+            'status-' + status_name, state, logger, repo_cfg,
+        )
 
     return 'OK'
 
