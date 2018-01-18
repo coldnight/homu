@@ -1459,15 +1459,13 @@ def main():
     global_cfg = cfg
 
     gh = gitlab.login(cfg['gitlab']['access_token'])
-    user = gh.user()
+    gh.auth()
+    user = gh.user
     cfg_git = cfg.get('git', {})
     user_email = cfg_git.get('email')
     if user_email is None:
-        try:
-            user_email = [x for x in gh.iter_emails() if x['primary']][0]['email']  # noqa
-        except IndexError:
-            raise RuntimeError('Primary email not set, or "user" scope not granted')  # noqa
-    user_name = cfg_git.get('name', user.name if user.name else user.login)
+        raise RuntimeError('Email not set')  # noqa
+    user_name = cfg_git.get('name', user.name if user.name else user.username)
 
     states = {}
     repos = {}
