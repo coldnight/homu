@@ -291,7 +291,7 @@ def gitlab_hook():
     lazy_debug(logger, lambda: "Got event_type {}".format(event_type))
     if event_type == 'Merge Request Hook':
         mr = info["object_attributes"]
-        action = mr['open']
+        action = mr['action']
         pull_num = mr["iid"]
         head_sha = mr["last_commit"]["id"]
         source_owner, source_name = mr["source"]["path_with_namespace"].split("/")  # noqa
@@ -488,10 +488,11 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                 try:
                     try:
                         gitlab.set_ref(
-                            state.get_repo(), 'heads/' +
-                            state.base_ref, state.merge_sha,
+                            state.get_repo(), 'heads/' + state.base_ref,
+                            state.merge_sha,
                         )
                     except gitlab.CommonError:
+                        logger.exception()
                         gitlab.create_status(
                             state.get_repo(),
                             state.merge_sha,
@@ -511,7 +512,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                             ' {}'.format(e))
                     gitlab.create_status(
                         state.get_repo(),
-                        state.head_sha, 'error', url,
+                        state.head_sha, 'canceled', url,
                         desc, context='homu',
                     )
 
@@ -624,7 +625,7 @@ def buildbot():
                                 gitlab.create_status(
                                     state.get_repo(),
                                     state.head_sha,
-                                    'error', url,
+                                    'canceled', url,
                                     desc,
                                     context='homu',
                                 )
