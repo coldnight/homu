@@ -1,8 +1,8 @@
-# Homu
+# GitLab Homu
 
 [![Hommando]][Akemi Homura]
 
-Current project is a bot that based on [homu], add support for GitLab via integrates with [GitLab Pipelines].
+homu-gitlab is a bot that based on [homu], add support for GitLab via integrates with [GitLab Pipelines].
 
 [homu]: https://github.com/servo/homu
 [Hommando]: https://i.imgur.com/j0jNvHF.png
@@ -19,7 +19,7 @@ See more detail in [homu].
 $ sudo apt-get install python3-venv
 $ pyvenv .venv
 $ . .venv/bin/activate
-$ git clone https://github.com/coldnight/homu.git
+$ git clone https://github.com/coldnight/homu-gitlab.git
 $ pip install -e homu
 ```
 
