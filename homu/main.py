@@ -512,14 +512,13 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
 
                 state.add_comment('\n'.join(lines))
 
-            print("Current sha %s, head_sha %s" % (cur_sha, state.head_sha))
             if sha_cmp(cur_sha, state.head_sha):
                 state.approved_by = approver
                 state.try_ = False
                 state.set_status('')
 
                 state.save()
-            elif realtime: # and username != my_username:
+            elif realtime and username != my_username:
                 if cur_sha:
                     msg = '`{}` is not a valid commit SHA.'.format(cur_sha)
                     state.add_comment(

@@ -1,41 +1,37 @@
 [gitlab]
 
-# Information for securely interacting with GitHub. These are found/generated
-# under <https://github.com/settings/applications>.
+# GitLab host
+host = "https://gitlab.com"
 
-# A GitHub personal access token.
+# Information for securely interacting with GitLab. These are found/generated
+# under https://gitlab.com/profile/personal_access_tokens
+# A GitLab private token
 access_token = ""
-
-# A GitHub oauth application for this instance of homu:
-app_client_id = ""
-app_client_secret = ""
 
 # Priority values above max_priority will be refused.
 max_priority = 9001
 
 [git]
 
-# Use the local Git command. Required to use some advanced features. It also
-# speeds up Travis by reducing temporary commits.
-#local_git = false
+# Use the local Git command.
+# Because GitLab not support merge API, so the local_git is required.
+local_git = true
 
 # SSH private key. Needed only when the local Git command is used.
-#ssh_key = """
-#"""
+ssh_key = """
+"""
 
-# By default, Homu extracts the name+email from the Github account it will be
-# using. However, you may want to use a private email for the account, and
-# associate the commits with a public email address.
-#user = "Some Cool Project Bot"
-#email = "coolprojectbot-devel@example.com"
+# You must associate the commits with a public email address.
+user = "Some Cool Project Bot"
+email = "coolprojectbot-devel@example.com"
 
 [web]
 
 # The port homu listens on.
 port = 54856
 
-# Synchronize all open PRs on startup. "Synchronize" means fetch the state of
-# all open PRs.
+# Synchronize all open MRs on startup. "Synchronize" means fetch the state of
+# all open MRs.
 sync_on_start = true
 
 # Custom hooks can be added as well.
@@ -55,15 +51,12 @@ sync_on_start = true
 [repo.NAME]
 
 # Which repo are we talking about? You can get these fields from your repo URL:
-#    github.com/<owner>/<name>
+#    gitlab.example.com/<owner>/<name>
 owner = ""
 name = ""
 
-# Who can approve PRs (r+ rights)? You can put GitHub usernames here.
+# Who can approve MRs (r+ rights)? You can put GitLab usernames here.
 reviewers = []
-# Alternatively, set this  allow any github collaborator;
-# note that you can *also* specify reviewers above.
-# auth_collaborators = true
 
 # Who has 'try' rights? (try, retry, force, clean, prioritization). It's fine to
 # keep this empty.
@@ -75,12 +68,7 @@ try_users = []
 # Auto-squash commits. Requires the local Git command.
 #autosquash = true
 
-# If the PR already has the same success statuses that we expect on the `auto`
-# branch, then push directly to branch if safe to do so. Requires the local Git
-# command.
-#status_based_exemption = false
-
-# Maximum test duration allowed for testing a PR in this repository.
+# Maximum test duration allowed for testing a MR in this repository.
 # Default to 10 hours.
 #timeout = 36000
 
@@ -92,50 +80,16 @@ try_users = []
 #try = "try"
 #rollup = "rollup"
 
-[repo.NAME.github]
+[repo.NAME.gitlab]
 # Arbitrary secret. You can generate one with: openssl rand -hex 20
 secret = ""
 
-# Travis integration. Don't forget to allow Travis to test the `auto` branch!
-[repo.NAME.status.travis]
-# String label set by status updates. Don't touch this unless you really know
-# what you're doing.
-context = 'continuous-integration/travis-ci/push'
-
-# Appveyor integration. Don't forget to allow Appveyor to test the `auto` branch!
-#[repo.NAME.status.appveyor]
+# GitLab has no status push in Webhooks, so currently just support GitLab Pipeline Jobs.
+# See also: https://docs.gitlab.com/ee/ci/pipelines.html#jobs
+[repo.NAME.job.LABEL]
 #
-# String label set by status updates. Don't touch this unless you really know
-# what you're doing.
-#context = 'continuous-integration/appveyor/branch'
-
-# Generic GitHub Status API support. You don't need this if you're using the
-# above examples for Travis/Appveyor.
-#[repo.NAME.status.LABEL]
-#
-# String label set by status updates.
-#context = ""
-#
-# Equivalent context to look for on the PR itself if checking whether the
-# build should be exempted. If omitted, looks for the same context. This is
-# only used if status_based_exemption is true.
-#pr_context = ""
-
-# Use buildbot for running tests
-#[repo.NAME.buildbot]
-#
-#url = ""
-#secret = ""
-#
-#builders = ["auto-linux", "auto-mac"]
-#try_builders = ["try-linux", "try-mac"]
-#
-#username = ""
-#password = ""
-
-#
-## Boolean which indicates whether the builder is included in try builds (defaults to true)
-#try = false
+# String label set by jobs updates.
+context = ""
 
 # The database homu uses
 [db]

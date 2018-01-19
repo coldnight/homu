@@ -434,13 +434,12 @@ def gitlab_hook():
             return 'OK'
 
         lazy_debug(logger, lambda: 'Found state via: {}'.format(info["sha"]))  # noqa
-        status_name = ""
-        if 'status' in repo_cfg:
-            for name, value in repo_cfg['status'].items():
-                if 'context' in value and value['context'] == info['build_name']:  # noqa
-                    status_name = name
+        job_name = ""
+        for name, value in repo_cfg['job'].items():
+            if 'context' in value and value['context'] == info['build_name']:  # noqa
+                job_name = name
 
-        if status_name is "":
+        if job_name is "":
             return 'OK'
         if info['build_status'] in ['running', 'created']:
             return 'OK'
@@ -454,7 +453,7 @@ def gitlab_hook():
         )
         report_build_res(
             info['build_status'] == 'success', target_url,
-            'status-' + status_name, state, logger, repo_cfg,
+            'job-' + job_name, state, logger, repo_cfg,
         )
 
     return 'OK'
