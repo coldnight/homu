@@ -42,8 +42,8 @@ def create_status(
     repo.commits.get(sha).statuses.create(data)
 
 
-def login(access_token):
-    return gitlab.Gitlab('https://gitlab.com', private_token=access_token)
+def login(host, access_token):
+    return gitlab.Gitlab(host, private_token=access_token)
 
 
 def iter_issue_comments(repo, num):

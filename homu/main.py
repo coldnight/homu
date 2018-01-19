@@ -268,7 +268,10 @@ class PullReqState:
     def get_repo(self):
         repo = self.repos[self.repo_label].gh
         if not repo:
-            gh = gitlab.login(global_cfg['gitlab']['access_token'])
+            gh = gitlab.login(
+                global_cfg['gitlab']['host'],
+                global_cfg['gitlab']['access_token'],
+            )
             repo = gitlab.get_repository(gh, self.owner, self.name)
             self.repos[self.repo_label].gh = repo
 
@@ -933,8 +936,6 @@ def pull_is_rebased(state, repo_cfg, git_cfg, base_sha):
                                      base_sha, state.head_sha)) == 0
 
 
-# We could fetch this from GitHub instead, but that API is being deprecated:
-# https://developer.gitlab.com/changes/2013-04-25-deprecating-merge-commit-sha/
 def get_gitlab_merge_sha(state, repo_cfg, git_cfg):
     assert git_cfg['local_git']
     git_cmd = init_local_git_cmds(repo_cfg, git_cfg)
@@ -1461,7 +1462,7 @@ def main():
             raise
     global_cfg = cfg
 
-    gh = gitlab.login(cfg['gitlab']['access_token'])
+    gh = gitlab.login(cfg["gitlab"]["host"], cfg['gitlab']['access_token'])
     gh.auth()
     user = gh.user
     cfg_git = cfg.get('git', {})
