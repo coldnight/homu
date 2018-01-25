@@ -766,7 +766,7 @@ def git_push(git_cmd, branch, state):
 
 def init_local_git_cmds(repo_cfg, git_cfg):
     fpath = 'cache/{}/{}'.format(repo_cfg['owner'], repo_cfg['name'])
-    host = urllib.parse(global_cfg["gitlab"]["host"]).netloc
+    host = urllib.parse.urlparse(global_cfg["gitlab"]["host"]).netloc
     url = 'git@{}:{}/{}.git'.format(
         host,
         repo_cfg['owner'], repo_cfg['name'],

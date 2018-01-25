@@ -273,7 +273,6 @@ def gitlab_hook():
 
     response.content_type = 'text/plain'
 
-    payload = request.body.read()
     info = request.json
 
     lazy_debug(logger, lambda: 'info: {}'.format(utils.remove_url_keys_from_json(info)))  # noqa
