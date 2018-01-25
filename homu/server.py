@@ -413,6 +413,7 @@ def gitlab_hook():
         pull_num = info["merge_request"]["iid"]
         mr = info["merge_request"]
         state = g.states[repo_label].get(pull_num)
+        state.set_mergeable(mr["merge_status"] == "can_be_merged")
 
         if state:
             state.title = mr['title']
