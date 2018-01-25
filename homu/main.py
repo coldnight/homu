@@ -1567,8 +1567,8 @@ def main():
                     builders += repo_cfg['buildbot']['builders']
                 if 'travis' in repo_cfg:
                     builders += ['travis']
-                if 'status' in repo_cfg:
-                    builders += ['status-' + key for key, value in repo_cfg['status'].items() if 'context' in value]  # noqa
+                if 'job' in repo_cfg:
+                    builders += ['jobs-' + key for key, value in repo_cfg['job'].items() if 'context' in value]  # noqa
                 if len(builders) is 0:
                     raise RuntimeError('Invalid configuration')
 
