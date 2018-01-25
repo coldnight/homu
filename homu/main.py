@@ -1184,13 +1184,19 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
         state.head_sha,
         state.merge_sha,
     )
-    gitlab.create_status(
-        state.get_repo(),
-        state.head_sha,
-        'running',
-        '',
-        desc,
-        context='homu')
+
+    try:
+        gitlab.create_status(
+            state.get_repo(),
+            state.head_sha,
+            'running',
+            '',
+            desc,
+            context='homu',
+        )
+    except gitlab.CommonError:
+        # GitLab set duplicate will cause error
+        pass
 
     state.add_comment(':hourglass: ' + desc)
 
