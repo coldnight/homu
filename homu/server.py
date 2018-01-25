@@ -82,7 +82,8 @@ def queue(repo_label):
         multiple = len(labels) > 1
         if repo_label in g.repos and g.repos[repo_label].treeclosed >= 0:
             single_repo_closed = g.repos[repo_label].treeclosed
-        repo_url = 'https://gitlab.com/{}/{}'.format(
+        repo_url = '{}/{}/{}'.format(
+            g.cfg["gitlab"]["host"],
             g.cfg['repo'][repo_label]['owner'],
             g.cfg['repo'][repo_label]['name'])
 
@@ -110,7 +111,8 @@ def queue(repo_label):
             'status': state.get_status(),
             'status_ext': status_ext,
             'priority': 'rollup' if state.rollup else state.priority,
-            'url': 'https://gitlab.com/{}/{}/merge_requests/{}'.format(
+            'url': '{}/{}/{}/merge_requests/{}'.format(
+                g.cfg["gitlab"]["host"],
                 state.owner,
                 state.name,
                 state.num
@@ -123,7 +125,8 @@ def queue(repo_label):
                           'no' if state.mergeable is False else ''),
             'assignee': state.assignee,
             'repo_label': state.repo_label,
-            'repo_url': 'https://gitlab.com/{}/{}'.format(
+            'repo_url': '{}/{}/{}'.format(
+                g.cfg["gitlab"]["host"],
                 state.owner,
                 state.name
             ),
@@ -155,7 +158,9 @@ def callback():
     state = json.loads(request.query.state)
 
     lazy_debug(logger, lambda: 'state: {}'.format(state))
-    oauth_url = 'https://gitlab.com/login/oauth/access_token'
+    oauth_url = '{}/login/oauth/access_token'.format(
+        g.cfg["gitlab"]["host"],
+    )
 
     try:
         res = requests.post(oauth_url, data={

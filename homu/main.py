@@ -3,6 +3,7 @@ import toml
 import json
 import re
 import functools
+import urllib.parse
 from . import utils
 from . import gitlab
 from .utils import lazy_debug
@@ -765,7 +766,11 @@ def git_push(git_cmd, branch, state):
 
 def init_local_git_cmds(repo_cfg, git_cfg):
     fpath = 'cache/{}/{}'.format(repo_cfg['owner'], repo_cfg['name'])
-    url = 'git@gitlab.com:{}/{}.git'.format(repo_cfg['owner'], repo_cfg['name'])  # noqa
+    host = urllib.parse(global_cfg["gitlab"]["host"]).netloc
+    url = 'git@{}:{}/{}.git'.format(
+        host,
+        repo_cfg['owner'], repo_cfg['name'],
+    )  # noqa
 
     if not os.path.exists(SSH_KEY_FILE):
         os.makedirs(os.path.dirname(SSH_KEY_FILE), exist_ok=True)
