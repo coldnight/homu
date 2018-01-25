@@ -1127,7 +1127,7 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
         only_status_builders = False
     if 'job' in repo_cfg:
         found_travis_context = False
-        for key, value in repo_cfg['status'].items():
+        for key, value in repo_cfg['job'].items():
             context = value.get('context')
             if context is not None:
                 if state.try_ and not value.get('try', True):
