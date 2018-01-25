@@ -1133,7 +1133,7 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
                 if state.try_ and not value.get('try', True):
                     # Skip this builder for tries.
                     continue
-                builders += ['jobs-' + key]
+                builders += ['job-' + key]
                 # We have an optional fast path if the Travis test passed
                 # for a given commit and master is unchanged, we can do
                 # a direct push.
@@ -1568,7 +1568,7 @@ def main():
                 if 'travis' in repo_cfg:
                     builders += ['travis']
                 if 'job' in repo_cfg:
-                    builders += ['jobs-' + key for key, value in repo_cfg['job'].items() if 'context' in value]  # noqa
+                    builders += ['job-' + key for key, value in repo_cfg['job'].items() if 'context' in value]  # noqa
                 if len(builders) is 0:
                     raise RuntimeError('Invalid configuration')
 
