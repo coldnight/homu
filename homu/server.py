@@ -496,7 +496,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                 try:
                     utils.logged_call(git_cmd('fetch', 'origin', state.base_ref))   # noqa
                     utils.logged_call(git_cmd("checkout", state.base_ref))          # noqa
-                    utils.logged_call(git_cmd("merge", "--ff-only", "origin/" + state.base_ref))    # noqa
+                    utils.logged_call(git_cmd("reset", "--hard", "origin/" + state.base_ref))    # noqa
                     utils.logged_call(git_cmd("merge", "--ff-only", state.merge_sha))           # noqa
                     utils.logged_call(git_cmd("push", "origin", state.base_ref))  # noqa
                 except subprocess.CalledProcessError as e:
