@@ -491,7 +491,6 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                                     state.base_ref)
                 from .main import init_local_git_cmds
                 from .main import global_git_cfg
-                from .main import git_push
                 git_cmd = init_local_git_cmds(repo_cfg, global_git_cfg)
                 state.add_comment(comment)
                 try:
@@ -499,7 +498,7 @@ def report_build_res(succ, url, builder, state, logger, repo_cfg):
                     utils.logged_call(git_cmd("checkout", state.base_ref))          # noqa
                     utils.logged_call(git_cmd("merge", "--ff-only", "origin/" + state.base_ref))    # noqa
                     utils.logged_call(git_cmd("merge", "--ff-only", state.merge_sha))           # noqa
-                    git_push(git_cmd, state.base_ref, state)
+                    utils.logged_call(git_cmd("push", "origin", state.base_ref))  # noqa
                 except subprocess.CalledProcessError as e:
                     state.set_status('error')
                     desc = ('Test was successful, but fast-forwarding failed:'
