@@ -780,6 +780,8 @@ def init_local_git_cmds(repo_cfg, git_cfg):
 
     if not os.path.exists(fpath):
         utils.logged_call(['git', 'init', fpath])
+        utils.logged_call(['git', '-C', fpath, 'config', 'user.name', git_cfg["name"]]) # noqa
+        utils.logged_call(['git', '-C', fpath, 'config', 'user.email', git_cfg["email"]])  # noqa
         utils.logged_call(['git', '-C', fpath, 'remote', 'add', 'origin', url])  # noqa
 
     return lambda *args: ['git', '-C', fpath] + list(args)
