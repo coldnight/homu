@@ -9,7 +9,7 @@ CommonError = gitlab.exceptions.GitlabError
 
 
 def set_ref(repo, ref, sha, *, force=False, auto_create=True, retry=1):
-    branch_name = ref.lstrip("heads/")
+    branch_name = ref[len("heads/"):] if ref.start('heads') else ref
 
     # Delete branch first
     try:
@@ -51,7 +51,7 @@ def iter_issue_comments(repo, num):
 
 
 def get_ref_sha(repo, ref):
-    branch_name = ref.lstrip("heads/")
+    branch_name = ref[len("heads/"):] if ref.start('heads/') else ref
     return repo.branches.get(branch_name).commit["id"]
 
 
