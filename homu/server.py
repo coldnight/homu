@@ -391,7 +391,10 @@ def gitlab_hook():
             state.assignee = assignee or ''
 
             state.save()
-
+        elif action == "update":
+            if state.head_sha != head_sha:
+                state.head_advanced(head_sha)
+                state.save()
         else:
             lazy_debug(logger, lambda: 'Invalid pull_request action: {}'.format(action))  # noqa
 
