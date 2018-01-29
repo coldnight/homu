@@ -279,10 +279,12 @@ def gitlab_hook():
 
     try:
         path = urllib.parse.urlparse(info["repository"]["homepage"]).path
-        owner, repo_name = path.split("/")[1:]
+        repo_parts = path.split("/")[1:]
     except KeyError:
-        owner, repo_name = info["project"]["path_with_namespace"].split("/")
+        repo_parts = info["project"]["path_with_namespace"].split("/")
 
+    owner = '/'.join(repo_parts[0:-1])
+    repo_name = repo_parts[-1]
     repo_label = g.repo_labels[owner, repo_name]
     repo_cfg = g.repo_cfgs[repo_label]
 
@@ -299,7 +301,9 @@ def gitlab_hook():
         action = mr['action']
         pull_num = mr["iid"]
         head_sha = mr["last_commit"]["id"]
-        source_owner, source_name = mr["source"]["path_with_namespace"].split("/")  # noqa
+        source_repo_parts = mr["source"]["path_with_namespace"].split("/")  # noqa
+        source_owner = "/".join(source_repo_parts[0:-1])
+        source_name = source_repo_parts[-1]
         if action in ['open', 'reopen']:
             state = PullReqState(
                 mr["id"],
