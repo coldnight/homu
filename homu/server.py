@@ -392,6 +392,7 @@ def gitlab_hook():
 
             state.save()
         elif action == "update":
+            state = g.states[repo_label][pull_num]
             if state.head_sha != head_sha:
                 state.head_advanced(head_sha)
                 state.save()
