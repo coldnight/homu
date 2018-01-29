@@ -51,7 +51,7 @@ def iter_issue_comments(repo, num):
 
 
 def get_ref_sha(repo, ref):
-    branch_name = ref[len("heads/"):] if ref.startwiths('heads/') else ref
+    branch_name = ref[len("heads/"):] if ref.startswith('heads/') else ref
     return repo.branches.get(branch_name).commit["id"]
 
 
