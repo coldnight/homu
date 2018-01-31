@@ -410,9 +410,18 @@ def gitlab_hook():
                 })
 
             if state.head_sha == info['before']:
+                before_status = state.status
                 state.head_advanced(info['after'])
 
                 state.save()
+
+                if before_status == "pending":
+                    state.add_comment(
+                        ":construction: Test has broken by new commit {:.7}."
+                        .format(
+                            info["after"],
+                        )
+                    )
 
     elif event_type == 'mr_comment':
         body = info["object_attributes"]["note"]
