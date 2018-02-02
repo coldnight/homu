@@ -316,7 +316,8 @@ def gitlab_hook():
             state.body = mr['description']
             state.head_ref = source_owner + ":" + mr["source_branch"]  # noqa
             state.base_ref = mr["target_branch"]
-            state.set_mergeable(mr["merge_status"] == "can_be_merged")
+            if mr["merge_status"] != "unchecked":
+                state.set_mergeable(mr["merge_status"] == "can_be_merged")
             assignee = mr["assignee"]["username"] if mr.get("assignee") else ""
             state.assignee = (assignee or '')
 
@@ -429,7 +430,8 @@ def gitlab_hook():
         pull_num = info["merge_request"]["iid"]
         mr = info["merge_request"]
         state = g.states[repo_label].get(pull_num)
-        state.set_mergeable(mr["merge_status"] == "can_be_merged")
+        if mr["merge_status"] != "unchecked":
+            state.set_mergeable(mr["merge_status"] == "can_be_merged")
 
         if state:
             state.title = mr['title']
