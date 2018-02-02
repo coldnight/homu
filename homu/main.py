@@ -1336,9 +1336,18 @@ def fetch_mergeability(mergeable_que):
             if state.status == 'success':
                 continue
 
-            mergeable = gitlab.is_pull_request_mergeable(
-                state.get_repo(), state.id_,
-            )
+            # Wait 10 seconds for mergeable check
+            for i in range(10):
+                merge_status = gitlab.get_pull(state.get_repo(), state.id_).merge_status   # noqa
+                if merge_status != "unchecked":
+                    break
+
+                time.sleep(1)
+
+            if merge_status == "unchecked":
+                continue
+
+            mergeable = merge_status == "can_be_merged"
 
             if state.mergeable is True and mergeable is False:
                 if cause:

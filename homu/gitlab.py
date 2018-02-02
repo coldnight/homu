@@ -55,16 +55,16 @@ def get_ref_sha(repo, ref):
     return repo.branches.get(branch_name).commit["id"]
 
 
+def get_pull(repo, num):
+    return repo.mergerequests.get(num)
+
+
 def get_pull_request_sha(repo, num):
-    return repo.mergerequests.get(num).sha
+    return get_pull(repo, num).sha
 
 
 def get_pull_request_user(repo, num):
-    return repo.mergerequests.get(num).author.username
-
-
-def is_pull_request_mergeable(repo, num):
-    return repo.mergerequests.get(num).merge_status == "can_be_merged"
+    return get_pull(repo, num).author.username
 
 
 def get_parent_shas(repo, sha):
