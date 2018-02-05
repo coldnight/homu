@@ -356,7 +356,7 @@ def gitlab_hook():
             if found:
                 g.queue_handler()
 
-        elif action == 'close':
+        elif action in ['close', 'merge']:
             state = g.states[repo_label][pull_num]
             if hasattr(state, 'fake_merge_sha'):
                 def inner():
