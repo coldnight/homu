@@ -309,7 +309,7 @@ def gitlab_hook():
                 mr["id"],
                 pull_num, head_sha, '', g.db, repo_label,
                 g.mergeable_que, g.gh,
-                source_owner, source_name,
+                owner, repo_name,
                 g.repos,
             )
             state.title = mr['title']
