@@ -175,7 +175,7 @@ class PullReqState:
     def get_issue(self):
         issue = getattr(self, 'issue', None)
         if not issue:
-            issue = self.issue = self.get_repo().mergerequests.get(self.id_)
+            issue = self.issue = self.get_repo().mergerequests.get(self.num)
         return issue
 
     def add_comment(self, text):
@@ -304,7 +304,7 @@ class PullReqState:
             ])
 
     def refresh(self):
-        issue = self.get_repo().mergerequests.get(self.id_)
+        issue = self.get_repo().mergerequests.get(self.num)
 
         self.title = issue.title
         self.body = issue.description
@@ -486,7 +486,7 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
 
                 state.head_sha = gitlab.get_pull_request_sha(
                     state.get_repo(),
-                    state.id_,
+                    state.num,
                 )
                 state.save()
 
@@ -600,7 +600,7 @@ def parse_commands(body, username, repo_cfg, state, my_username, db, states,
                 continue
 
             state.delegate = gitlab.get_pull_request_user(
-                state.get_repo(), state.id_,
+                state.get_repo(), state.num,
             )
             state.save()
 
@@ -1107,7 +1107,7 @@ def start_build(state, repo_cfgs, buildbot_slots, logger, db, git_cfg):
 
     lazy_debug(logger, lambda: "start_build on {!r}".format(state.get_repo()))
 
-    pull_request_sha = gitlab.get_pull_request_sha(state.get_repo(), state.id_)
+    pull_request_sha = gitlab.get_pull_request_sha(state.get_repo(), state.num)
     assert state.head_sha == pull_request_sha
 
     repo_cfg = repo_cfgs[state.repo_label]
@@ -1338,7 +1338,7 @@ def fetch_mergeability(mergeable_que):
 
             # Wait 10 seconds for mergeable check
             for i in range(10):
-                merge_status = gitlab.get_pull(state.get_repo(), state.id_).merge_status   # noqa
+                merge_status = gitlab.get_pull(state.get_repo(), state.num).merge_status   # noqa
                 if merge_status != "unchecked":
                     break
 
@@ -1419,7 +1419,7 @@ def synchronize(repo_label, repo_cfg, logger, gh, states, repos, db, mergeable_q
         state.set_mergeable(None)
         state.assignee = pull.assignee["username"] if pull.assignee else ''
 
-        for comment in gitlab.iter_issue_comments(repo, pull.id):
+        for comment in gitlab.iter_issue_comments(repo, pull.iid):
             parse_commands(
                 comment.body,
                 comment.author["username"],
