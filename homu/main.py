@@ -1414,15 +1414,15 @@ def synchronize(repo_label, repo_cfg, logger, gh, states, repos, db, mergeable_q
         state = PullReqState(pull.id, pull.iid, pull.sha, status, db, repo_label, mergeable_que, gh, repo_cfg['owner'], repo_cfg['name'], repos)  # noqa
         state.title = pull.title
         state.body = pull.description
-        state.head_ref = pull.author.username + ':' + pull.source_branch
+        state.head_ref = pull.author["username"] + ':' + pull.source_branch
         state.base_ref = pull.target_branch
         state.set_mergeable(None)
-        state.assignee = pull.assignee.username if pull.assignee else ''
+        state.assignee = pull.assignee["username"] if pull.assignee else ''
 
         for comment in gitlab.iter_issue_comments(repo, pull.id):
             parse_commands(
                 comment.body,
-                comment.author.username,
+                comment.author["username"],
                 repo_cfg,
                 state,
                 my_username,
