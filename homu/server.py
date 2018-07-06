@@ -798,10 +798,22 @@ def start(cfg, states, queue_handler, repo_cfgs, repos, logger,
     if cfg['web'].get('sync_on_start', False):
         Thread(target=synch_all).start()
 
+    app = bottle.app()
+
+    if cfg["web"].get("sentry_dsn"):
+        from raven import Client
+        from raven.contrib.bottle import Sentry
+        client = Client(cfg["web"]["sentry_dsn"])
+        app.catchall = False
+        app = Sentry(app, client)
+
     try:
-        run(host=cfg['web'].get('host', '0.0.0.0'),
+        run(
+            app=app,
+            host=cfg['web'].get('host', '0.0.0.0'),
             port=cfg['web']['port'],
-            server='waitress')
+            server='waitress',
+        )
     except OSError as e:
         print(e, file=sys.stderr)
         os._exit(1)
