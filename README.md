@@ -20,7 +20,7 @@ $ sudo apt-get install python3-venv
 $ pyvenv .venv
 $ . .venv/bin/activate
 $ git clone https://github.com/coldnight/homu-gitlab.git
-$ pip install -e homu
+$ pip install -e homu-gitlab
 ```
 
 ### How to configure
