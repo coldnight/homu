@@ -330,7 +330,7 @@ def gitlab_hook():
                 ):
                     found = parse_commands(
                         c.body,
-                        c.author.username,
+                        c.author["username"],
                         repo_cfg,
                         state,
                         g.my_username,
