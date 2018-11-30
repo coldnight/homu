@@ -35,7 +35,7 @@ port = 54856
 sync_on_start = true
 
 # Set Sentry DSN to report exceptions to Sentry.
-sentry_dns = ""
+sentry_dsn = ""
 
 # Custom hooks can be added as well.
 # Homu will ping the given endpoint with POSTdata of the form:
